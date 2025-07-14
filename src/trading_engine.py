@@ -1,0 +1,154 @@
+"""
+Основной торговый движок для Polymarket
+Включает мониторинг новых рынков, фильтрацию и автоматическую торговлю
+"""
+
+import asyncio
+import time
+from datetime import datetime, timedelta
+from typing import Dict, Optional, Set, Tuple
+from loguru import logger
+
+from src.config.settings import config
+from src.polymarket_client import PolymarketClient
+from src.telegram_bot import telegram_notifier
+
+
+class MarketFilter:
+    """Фильтр рынков по заданным критериям"""
+    def __init__(self):
+        self.strategy_params = config.get_strategy_params()
+        self.processed_markets: Set[str] = set()
+
+    def is_binary_market(self, market_data: Dict) -> bool:
+        return len(market_data.get("outcomes", [])) == 2
+
+    def check_liquidity_requirement(self, market_data: Dict) -> bool:
+        return float(market_data.get("liquidity", 0)) >= config.trading.MIN_LIQUIDITY_USD
+
+    def should_trade_market(self, market_data: Dict) -> Tuple[bool, str]:
+        market_id = market_data.get("id")
+        if not market_id:
+            return False, "Отсутствует ID рынка"
+            
+        if market_id in self.processed_markets:
+            return False, "Рынок уже обработан"
+
+        if not self.is_binary_market(market_data):
+            return False, "Не бинарный рынок"
+
+        if not self.check_liquidity_requirement(market_data):
+            return False, "Недостаточная ликвидность"
+            
+        self.processed_markets.add(market_id)
+        return True, "Рынок подходит для торговли"
+
+
+class TradingEngine:
+    """Основной торговый движок"""
+    def __init__(self):
+        self.client = PolymarketClient()
+        self.market_filter = MarketFilter()
+        self.is_running = False
+        self.stats = {"total_trades": 0, "successful_trades": 0, "total_profit": 0.0}
+
+        if self.client.get_address():
+            logger.info(f"Торговый движок инициализирован для аккаунта: {self.client.get_address()}")
+            self.is_trading_enabled = True
+        else:
+            logger.warning("PRIVATE_KEY не установлен. Торговля и управление позициями будут отключены.")
+            self.is_trading_enabled = False
+
+    async def start(self):
+        logger.info("Запуск торгового движка...")
+        self.is_running = True
+        telegram_notifier.set_trading_engine(self)
+        
+        tasks = [
+            asyncio.create_task(self._market_monitor_task()),
+        ]
+        # Запускаем мониторинг позиций только если торговля включена
+        if self.is_trading_enabled:
+            tasks.append(asyncio.create_task(self._position_monitor_task()))
+        
+        # Запускаем бота после настройки задач
+        await telegram_notifier.start_bot()
+
+        await asyncio.gather(*tasks, return_exceptions=True)
+
+    async def stop(self):
+        logger.info("Остановка торгового движка...")
+        self.is_running = False
+        self.client.stop_websocket()
+        await telegram_notifier.stop_bot()
+
+    async def _market_monitor_task(self):
+        logger.info("Запуск мониторинга рынков...")
+        while self.is_running:
+            try:
+                markets = self.client.get_markets()
+                for market in markets:
+                    should_trade, reason = self.market_filter.should_trade_market(market)
+                    if should_trade:
+                        await self._attempt_trade(market)
+                await asyncio.sleep(60)
+            except Exception as e:
+                logger.error(f"Ошибка мониторинга рынков: {e}")
+                await asyncio.sleep(60)
+
+    async def _attempt_trade(self, market_data: Dict):
+        if not self.is_trading_enabled: return
+        
+        token_id = self._get_target_token_id(market_data)
+        if not token_id: return
+
+        price = self.client.get_current_price(token_id)
+        if not price: return
+            
+        # Упрощенная логика для примера
+        side = "BUY"
+        size = config.trading.POSITION_SIZE_USD / price
+
+        order_result = self.client.place_order(token_id, side, size, price)
+        if order_result:
+            self.stats["total_trades"] += 1
+            logger.info(f"Сделка совершена: {order_result}")
+
+    def _get_target_token_id(self, market_data: Dict) -> Optional[str]:
+        for token in market_data.get("tokens", []):
+            if config.trading.POSITION_SIDE == "YES" and "YES" in token.get("name", ""):
+                return token.get("id")
+            if config.trading.POSITION_SIDE == "NO" and "NO" in token.get("name", ""):
+                return token.get("id")
+        return None
+
+    async def _position_monitor_task(self):
+        logger.info("Запуск мониторинга позиций...")
+        while self.is_running:
+            try:
+                # Эта логика теперь в PolymarketClient
+                await self.client.check_and_close_positions()
+                await asyncio.sleep(config.trading.POSITION_MONITOR_INTERVAL_SECONDS)
+            except Exception as e:
+                logger.error(f"Ошибка мониторинга позиций: {e}")
+                await asyncio.sleep(60)
+
+    async def get_stats(self) -> Dict:
+        open_positions_count = 0
+        user_address = self.client.get_address()
+        if user_address:
+            # get_open_positions возвращает все позиции, фильтруем по нашему пользователю
+            all_open_positions = await self.client.db_manager.get_open_positions()
+            user_open_positions = [p for p in all_open_positions if p.get('user_address') == user_address]
+            open_positions_count = len(user_open_positions)
+
+        return {**self.stats, "open_positions": open_positions_count}
+        
+    def enable_trading(self):
+        if not self.client.get_address():
+            logger.error("Невозможно включить торговлю: PRIVATE_KEY не установлен.")
+            return
+        self.is_trading_enabled = True
+    
+    def disable_trading(self):
+        self.is_trading_enabled = False
