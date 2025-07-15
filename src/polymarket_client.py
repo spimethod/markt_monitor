@@ -91,23 +91,34 @@ class PolymarketClient:
                 
             logger.info(f"✅ Получен ответ от Polymarket API")
             logger.info(f"📊 Тип ответа: {type(response)}")
+            logger.info(f"📊 Статус код: {response.status_code}")
             
-            if isinstance(response, dict):
+            # Получаем JSON из Response объекта
+            try:
+                data = response.json()
+                logger.info(f"📋 JSON данные получены, тип: {type(data)}")
+            except Exception as e:
+                logger.error(f"❌ Ошибка парсинга JSON: {e}")
+                logger.info(f"📄 Содержимое ответа: {response.text[:500]}")
+                return []
+            
+            if isinstance(data, dict):
                 # Если ответ - словарь, ищем список в нем
-                if 'data' in response:
-                    markets = response['data']
-                    logger.info(f"📋 Найдены рынки в response['data']: {len(markets)} штук")
-                elif 'markets' in response:
-                    markets = response['markets']  
-                    logger.info(f"📋 Найдены рынки в response['markets']: {len(markets)} штук")
+                if 'data' in data:
+                    markets = data['data']
+                    logger.info(f"📋 Найдены рынки в data['data']: {len(markets)} штук")
+                elif 'markets' in data:
+                    markets = data['markets']  
+                    logger.info(f"📋 Найдены рынки в data['markets']: {len(markets)} штук")
                 else:
-                    logger.warning(f"⚠️  Неожиданная структура ответа: {list(response.keys())}")
+                    logger.warning(f"⚠️  Неожиданная структура ответа: {list(data.keys())}")
+                    logger.info(f"📄 Структура JSON: {data}")
                     return []
-            elif isinstance(response, list):
-                markets = response
+            elif isinstance(data, list):
+                markets = data
                 logger.info(f"📋 Получен прямой список рынков: {len(markets)} штук")
             else:
-                logger.warning(f"❌ Неожиданный тип ответа: {type(response)}")
+                logger.warning(f"❌ Неожиданный тип JSON данных: {type(data)}")
                 return []
             
             # Логируем детали первых 3 рынков
@@ -149,7 +160,15 @@ class PolymarketClient:
             return None
         
         try:
-            user_address = self.get_address()
+            # Получаем адрес для проверки баланса
+            # Если есть PROXY_ADDRESS, используем его, иначе обычный адрес
+            if self.config.polymarket.POLYMARKET_PROXY_ADDRESS:
+                user_address = self.config.polymarket.POLYMARKET_PROXY_ADDRESS
+                logger.info(f"Используется PROXY адрес для баланса: {user_address}")
+            else:
+                user_address = self.get_address()
+                logger.info(f"Используется обычный адрес для баланса: {user_address}")
+                
             if not user_address:
                 logger.warning("Не удалось получить адрес пользователя")
                 return None
