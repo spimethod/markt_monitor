@@ -239,6 +239,55 @@ class TelegramNotifier:
             return self.trading_engine.client.get_account_balance()
         return None
 
+    def _get_detailed_balance(self) -> Dict[str, Any]:
+        """Получение детального баланса через Polymarket Data API"""
+        if not self.trading_engine or not hasattr(self.trading_engine, "client"):
+            return {"free_usdc": None, "positions_value": None, "total": None}
+        
+        client = self.trading_engine.client
+        if not client.account:
+            return {"free_usdc": None, "positions_value": None, "total": None}
+        
+        try:
+            # Получаем адреса для проверки
+            addresses_to_check = []
+            if client.config.polymarket.POLYMARKET_PROXY_ADDRESS:
+                addresses_to_check.append(client.config.polymarket.POLYMARKET_PROXY_ADDRESS)
+            main_address = client.get_address()
+            if main_address:
+                addresses_to_check.append(main_address)
+            
+            if not addresses_to_check:
+                return {"free_usdc": None, "positions_value": None, "total": None}
+            
+            # Пробуем для каждого адреса
+            for user_address in addresses_to_check:
+                # Получаем стоимость позиций
+                positions_value = client._get_positions_value(user_address)
+                
+                # Получаем свободный USDC
+                proxy_wallet, free_usdc = client._get_free_usdc_balance(user_address)
+                
+                if positions_value is not None or free_usdc is not None:
+                    total = 0.0
+                    if positions_value:
+                        total += positions_value
+                    if free_usdc:
+                        total += free_usdc
+                    
+                    return {
+                        "free_usdc": free_usdc or 0.0,
+                        "positions_value": positions_value or 0.0,
+                        "total": total if total > 0 else None,
+                        "proxy_wallet": proxy_wallet
+                    }
+            
+            return {"free_usdc": None, "positions_value": None, "total": None}
+            
+        except Exception as e:
+            logger.error(f"Ошибка получения детального баланса: {e}")
+            return {"free_usdc": None, "positions_value": None, "total": None}
+
     def _get_open_positions(self) -> List[Dict]:
         """Получение открытых позиций"""
         if self.trading_engine and hasattr(self.trading_engine, "client"):
@@ -307,13 +356,28 @@ class TelegramNotifier:
 
         stats = await self._get_current_stats()
 
+        # Получаем детальный баланс
+        detailed_balance = self._get_detailed_balance()
+        balance_text = ""
+        
+        if detailed_balance["total"] is not None:
+            balance_text = f"""💰 <b>Баланс (через Polymarket API):</b>
+• Свободный USDC: ${detailed_balance['free_usdc']:.2f}
+• Стоимость позиций: ${detailed_balance['positions_value']:.2f}
+• Общий баланс: ${detailed_balance['total']:.2f}"""
+            if detailed_balance.get("proxy_wallet"):
+                balance_text += f"\n• Proxy Wallet: {detailed_balance['proxy_wallet'][:10]}..."
+        else:
+            fallback_balance = self._get_current_balance() or 0
+            balance_text = f"💰 <b>Баланс (fallback):</b> ${fallback_balance:.2f}"
+
         text = f"""
 📊 <b>Статус бота</b>
 
 🤖 <b>Состояние:</b> {self.bot_status}
 🔄 <b>Торговля:</b> {'Включена' if stats.get('is_trading_enabled', False) else 'Отключена'}
 📈 <b>Открытых позиций:</b> {stats.get('open_positions', 0)}
-💰 <b>Баланс:</b> ${self._get_current_balance() or 0:.2f}
+{balance_text}
 
 📋 <b>Сегодня:</b>
 • Сделок: {stats.get('daily_trades', 0)}
@@ -593,13 +657,28 @@ class TelegramNotifier:
         """Обработка callback для статуса"""
         stats = await self._get_current_stats()
 
+        # Получаем детальный баланс
+        detailed_balance = self._get_detailed_balance()
+        balance_text = ""
+        
+        if detailed_balance["total"] is not None:
+            balance_text = f"""💰 <b>Баланс (через Polymarket API):</b>
+• Свободный USDC: ${detailed_balance['free_usdc']:.2f}
+• Стоимость позиций: ${detailed_balance['positions_value']:.2f}
+• Общий баланс: ${detailed_balance['total']:.2f}"""
+            if detailed_balance.get("proxy_wallet"):
+                balance_text += f"\n• Proxy Wallet: {detailed_balance['proxy_wallet'][:10]}..."
+        else:
+            fallback_balance = self._get_current_balance() or 0
+            balance_text = f"💰 <b>Баланс (fallback):</b> ${fallback_balance:.2f}"
+
         text = f"""
 📊 <b>Статус бота</b>
 
 🤖 <b>Состояние:</b> {self.bot_status}
 🔄 <b>Торговля:</b> {'Включена' if stats.get('is_trading_enabled', False) else 'Отключена'}
 📈 <b>Открытых позиций:</b> {stats.get('open_positions', 0)}
-💰 <b>Баланс:</b> ${self._get_current_balance() or 0:.2f}
+{balance_text}
 
 📋 <b>Сегодня:</b>
 • Сделок: {stats.get('daily_trades', 0)}

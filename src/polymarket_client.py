@@ -238,168 +238,226 @@ class PolymarketClient:
         return 0.5
 
     def get_account_balance(self) -> Optional[float]:
-        """Получение баланса USDC аккаунта"""
+        """Получение баланса USDC аккаунта через Polymarket Data API"""
         if not self.account:
             logger.warning("Невозможно получить баланс: аккаунт не инициализирован.")
             return None
         
         try:
-            # Получаем адрес для проверки баланса
-            # Если есть PROXY_ADDRESS, используем его, иначе обычный адрес
+            # Получаем список адресов для проверки
+            addresses_to_check = []
+            
+            # Добавляем PROXY адрес если есть
             if self.config.polymarket.POLYMARKET_PROXY_ADDRESS:
-                user_address = self.config.polymarket.POLYMARKET_PROXY_ADDRESS
-                logger.info(f"Используется PROXY адрес для баланса: {user_address}")
-            else:
-                user_address = self.get_address()
-                logger.info(f"Используется обычный адрес для баланса: {user_address}")
+                addresses_to_check.append(("PROXY", self.config.polymarket.POLYMARKET_PROXY_ADDRESS))
                 
-            if not user_address:
-                logger.warning("Не удалось получить адрес пользователя")
+            # Добавляем основной адрес
+            main_address = self.get_address()
+            if main_address:
+                addresses_to_check.append(("MAIN", main_address))
+                
+            if not addresses_to_check:
+                logger.warning("Не удалось получить адреса для проверки баланса")
                 return None
                 
-            # Способ 1: Прямое обращение к Polygon RPC для получения баланса USDC
-            # USDC контракт на Polygon: 0x2791Bca1f2de4661ED88A30C99A7a9449Aa84174
-            usdc_contract = "0x2791Bca1f2de4661ED88A30C99A7a9449Aa84174"
-            
-            # Список проверенных RPC провайдеров для Polygon
-            rpc_endpoints = [
-                "https://polygon-rpc.com",
-                "https://rpc.ankr.com/polygon",  # Требует API ключ, пропускаем если нет
-                "https://polygon.llamarpc.com",
-                "https://rpc-mainnet.matic.network",  # Официальный Polygon RPC
-                "https://polygon.rpc.blxrbdn.com",    # Блoксер
-                "https://rpc-mainnet.maticvigil.com", # MaticVigil
-                "https://rpc-mainnet.matic.quiknode.pro"  # QuickNode
-            ]
-            
-            # balanceOf(address) функция - 0x70a08231 + адрес (32 байта)
-            balance_of_signature = "0x70a08231"
-            padded_address = user_address[2:].lower().zfill(64)  # Убираем 0x и дополняем до 64 символов
-            data = balance_of_signature + padded_address
-            
-            logger.info(f"🔍 Запрос баланса USDC для адреса: {user_address}")
-            logger.info(f"📋 Контракт USDC: {usdc_contract}")
-            logger.info(f"📊 Данные запроса: {data}")
-            
-            for rpc_url in rpc_endpoints:
-                try:
-                    # Пропускаем ankr если нет API ключа
-                    if "ankr.com" in rpc_url and not hasattr(self.config, 'ankr_api_key'):
-                        logger.debug(f"⏭️ Пропускаем {rpc_url} - нет API ключа")
-                        continue
-                        
-                    logger.info(f"🌐 Запрос к RPC: {rpc_url}")
-                    
-                    rpc_payload = {
-                        "jsonrpc": "2.0",
-                        "method": "eth_call",
-                        "params": [
-                            {
-                                "to": usdc_contract,
-                                "data": data
-                            },
-                            "latest"
-                        ],
-                        "id": 1
-                    }
-                    
-                    headers = {"Content-Type": "application/json"}
-                    
-                    response = requests.post(
-                        rpc_url,
-                        json=rpc_payload,
-                        headers=headers,
-                        timeout=10
-                    )
-                    
-                    logger.info(f"📊 Статус ответа RPC: {response.status_code}")
-                    
-                    if response.status_code == 200:
-                        rpc_data = response.json()
-                        logger.info(f"📋 Ответ RPC: {rpc_data}")
-                        
-                        if 'result' in rpc_data and rpc_data['result']:
-                            hex_balance = rpc_data['result']
-                            
-                            # Проверяем на ошибки
-                            if hex_balance == "0x" or hex_balance.endswith("0" * 60):
-                                logger.warning(f"⚠️ RPC {rpc_url} вернул пустой результат для баланса USDC")
-                                continue
-                                
-                            # Конвертируем из hex в decimal и учитываем 6 decimals у USDC
-                            balance_wei = int(hex_balance, 16)
-                            balance_usdc = balance_wei / (10 ** 6)  # USDC имеет 6 десятичных знаков
-                            
-                            logger.info(f"✅ Успешно получен баланс через {rpc_url}: ${balance_usdc:.6f} USDC")
-                            return balance_usdc
-                        
-                        elif 'error' in rpc_data:
-                            logger.warning(f"⚠️ RPC ошибка от {rpc_url}: {rpc_data['error']}")
-                            continue
-                            
-                    else:
-                        logger.warning(f"⚠️ HTTP ошибка от {rpc_url}: {response.status_code}")
-                        
-                except Exception as e:
-                    logger.warning(f"❌ Ошибка с RPC {rpc_url}: {e}")
-                    continue
-                    
-            logger.warning("⚠️ Все RPC endpoints недоступны или показывают нулевой баланс USDC")
-            
-            # Способ 2: Gamma API (fallback)
-            logger.info("🔄 Попытка получить баланс через Gamma API...")
-            try:
-                gamma_url = f"https://gamma-api.polymarket.com/positions?user={user_address}"
-                logger.debug(f"📡 Gamma API запрос: {gamma_url}")
+            logger.info(f"💰 Получение баланса через Polymarket Data API")
+            logger.info(f"🔍 Проверяем {len(addresses_to_check)} адресов")
+            for addr_type, addr in addresses_to_check:
+                logger.info(f"   📍 {addr_type}: {addr}")
                 
-                response = requests.get(gamma_url, timeout=10)
-                logger.info(f"📊 Gamma API статус: {response.status_code}")
+            # Пробуем получить баланс для каждого адреса
+            for addr_type, user_address in addresses_to_check:
+                logger.info(f"🔍 Проверка баланса для {addr_type} адреса: {user_address}")
                 
-                if response.status_code == 200:
-                    data = response.json()
-                    logger.debug(f"📋 Gamma API ответ: {type(data)}")
+                # Способ 1: Получаем общую стоимость позиций через /value API
+                positions_value = self._get_positions_value(user_address)
+                
+                # Способ 2: Получаем детали позиций и ищем proxy wallet
+                proxy_wallet, free_usdc = self._get_free_usdc_balance(user_address)
+                
+                # Логируем результаты
+                if positions_value is not None:
+                    logger.info(f"📊 Общая стоимость позиций: ${positions_value:.6f}")
+                
+                if proxy_wallet:
+                    logger.info(f"🏦 Найден proxy wallet: {proxy_wallet}")
+                
+                if free_usdc is not None:
+                    logger.info(f"💵 Свободный USDC баланс: ${free_usdc:.6f}")
+                    return free_usdc
                     
-                    # Ищем свободный USDC баланс
-                    if isinstance(data, dict) and 'cash_balance' in data:
-                        balance = float(data['cash_balance'])
-                        logger.info(f"✅ Получен баланс через Gamma API (cash_balance): ${balance:.6f}")
-                        return balance
-                    elif isinstance(data, dict) and 'free_balance' in data:
-                        balance = float(data['free_balance'])
-                        logger.info(f"✅ Получен баланс через Gamma API (free_balance): ${balance:.6f}")
-                        return balance
-                    elif isinstance(data, list):
-                        # Суммируем свободные средства если есть массив позиций
-                        total_cash = 0.0
-                        for position in data:
-                            if isinstance(position, dict) and position.get('outcome') == 'CASH':
-                                total_cash += float(position.get('balance', 0))
-                        if total_cash > 0:
-                            logger.info(f"✅ Получен баланс через Gamma API (позиции): ${total_cash:.6f}")
-                            return total_cash
-                    else:
-                        logger.warning(f"⚠️ Gamma API: неожиданная структура данных")
-                else:
-                    logger.warning(f"⚠️ Gamma API недоступен: HTTP {response.status_code}")
-                        
-            except Exception as e:
-                logger.warning(f"❌ Gamma API ошибка: {e}")
+                # Если нет свободного USDC, но есть стоимость позиций
+                if positions_value and positions_value > 0:
+                    logger.info(f"✅ Найдена стоимость позиций: ${positions_value:.6f}")
+                    logger.warning("⚠️ Свободный USDC не найден, но есть активные позиции")
+                    # Возвращаем стоимость позиций как общий баланс
+                    return positions_value
             
-            # Способ 3: Заглушка с логированием для отладки
-            logger.warning("⚠️ Все API недоступны - используется заглушка баланса")
-            logger.info(f"🔍 Адрес кошелька для отладки: {user_address}")
-            logger.info(f"📋 USDC контракт: 0x2791Bca1f2de4661ED88A30C99A7a9449Aa84174")
-            
-            # Используем заглушку баланса для отличия от реального значения
-            # ВНИМАНИЕ: Обновите это значение после пополнения баланса!
-            mock_balance = 1.0  # Заглушка баланса для тестирования
-            logger.info(f"💰 Используется заглушка баланса: ${mock_balance:.2f}")
-            logger.info("ℹ️ Обновите mock_balance в коде после пополнения!")
+            # Fallback: используем заглушку
+            logger.warning("⚠️ Реальный баланс не найден через Polymarket Data API")
+            logger.info("🔄 Используется заглушка баланса для тестирования")
+            mock_balance = 1.0  # Заглушка баланса для отличия от реального значения
+            logger.info(f"💰 Заглушка баланса: ${mock_balance:.2f}")
             
             return mock_balance
             
         except Exception as e:
             logger.error(f"Ошибка получения баланса: {e}")
+            return None
+
+    def _get_positions_value(self, user_address: str) -> Optional[float]:
+        """Получение общей USD стоимости всех позиций через Polymarket Data API"""
+        try:
+            # API endpoint для получения общей стоимости позиций
+            value_url = f"https://data-api.polymarket.com/value?user={user_address}"
+            logger.debug(f"📡 Запрос к Data API (value): {value_url}")
+            
+            response = requests.get(value_url, timeout=10)
+            logger.debug(f"📊 Data API (value) статус: {response.status_code}")
+            
+            if response.status_code == 200:
+                data = response.json()
+                logger.debug(f"📋 Data API (value) ответ: {data}")
+                
+                if isinstance(data, list) and len(data) > 0:
+                    user_data = data[0]  # Берем первый элемент
+                    if isinstance(user_data, dict) and 'value' in user_data:
+                        total_value = float(user_data['value'])
+                        logger.info(f"✅ Получена общая стоимость позиций: ${total_value:.6f}")
+                        return total_value
+                    else:
+                        logger.warning("⚠️ Data API (value): неожиданная структура ответа")
+                elif isinstance(data, list) and len(data) == 0:
+                    logger.info("ℹ️ Data API (value): позиции не найдены")
+                    return 0.0
+                else:
+                    logger.warning(f"⚠️ Data API (value): неожиданный тип данных: {type(data)}")
+            else:
+                logger.warning(f"⚠️ Data API (value) ошибка HTTP: {response.status_code}")
+                
+        except Exception as e:
+            logger.warning(f"❌ Ошибка Data API (value): {e}")
+            
+        return None
+
+    def _get_free_usdc_balance(self, user_address: str) -> Tuple[Optional[str], Optional[float]]:
+        """
+        Получение свободного USDC баланса через proxy wallet
+        Возвращает: (proxy_wallet_address, free_usdc_balance)
+        """
+        try:
+            # API endpoint для получения детальных позиций
+            positions_url = f"https://data-api.polymarket.com/positions?user={user_address}"
+            logger.debug(f"📡 Запрос к Data API (positions): {positions_url}")
+            
+            response = requests.get(positions_url, timeout=10)
+            logger.debug(f"📊 Data API (positions) статус: {response.status_code}")
+            
+            if response.status_code == 200:
+                data = response.json()
+                logger.debug(f"📋 Data API (positions) ответ: {type(data)} с {len(data) if isinstance(data, list) else 'неизвестным'} элементами")
+                
+                proxy_wallet = None
+                
+                if isinstance(data, list) and len(data) > 0:
+                    # Ищем proxy wallet в первой позиции
+                    first_position = data[0]
+                    if isinstance(first_position, dict) and 'proxyWallet' in first_position:
+                        proxy_wallet = first_position['proxyWallet']
+                        logger.info(f"🏦 Найден proxy wallet: {proxy_wallet}")
+                        
+                        # Теперь получаем свободный USDC баланс для proxy wallet
+                        free_usdc = self._check_usdc_balance_for_address(proxy_wallet)
+                        return proxy_wallet, free_usdc
+                    else:
+                        logger.warning("⚠️ Data API (positions): proxyWallet не найден в данных")
+                elif isinstance(data, list) and len(data) == 0:
+                    logger.info("ℹ️ Data API (positions): позиции не найдены")
+                    return None, 0.0
+                else:
+                    logger.warning(f"⚠️ Data API (positions): неожиданный тип данных: {type(data)}")
+            else:
+                logger.warning(f"⚠️ Data API (positions) ошибка HTTP: {response.status_code}")
+                
+        except Exception as e:
+            logger.warning(f"❌ Ошибка Data API (positions): {e}")
+            
+        return None, None
+
+    def _check_usdc_balance_for_address(self, user_address: str) -> Optional[float]:
+        """Проверяет свободный баланс USDC для конкретного адреса через RPC"""
+        try:
+            # USDC контракты на Polygon (приоритет нативному USDC)
+            usdc_contracts = [
+                ("Native USDC", "0x3c499c542cEF5E3811e1192ce70d8cC03d5c3359"),  # Нативный USDC (приоритет)
+                ("Bridged USDC", "0x2791Bca1f2de4661ED88A30C99A7a9449Aa84174"),  # Bridged USDC
+            ]
+            
+            # Обновленные RPC endpoints для Polygon
+            rpc_endpoints = [
+                "https://polygon-rpc.com",
+                "https://polygon.llamarpc.com", 
+                "https://rpc-mainnet.matic.network",
+                "https://polygon.blockpi.network/v1/rpc/public",
+            ]
+            
+            logger.debug(f"🔍 Проверка свободного USDC для адреса: {user_address}")
+            
+            for contract_name, contract_addr in usdc_contracts:
+                logger.debug(f"📋 Проверка {contract_name}: {contract_addr}")
+                
+                # Формируем данные для вызова balanceOf
+                function_signature = "0x70a08231"  # balanceOf(address)
+                padded_address = user_address.replace("0x", "").lower().zfill(64)
+                call_data = function_signature + padded_address
+                
+                for rpc_url in rpc_endpoints:
+                    try:
+                        payload = {
+                            "jsonrpc": "2.0",
+                            "method": "eth_call",
+                            "params": [{
+                                "to": contract_addr,
+                                "data": call_data
+                            }, "latest"],
+                            "id": 1
+                        }
+                        
+                        response = requests.post(
+                            rpc_url,
+                            json=payload,
+                            headers={"Content-Type": "application/json"},
+                            timeout=10
+                        )
+                        
+                        if response.status_code != 200:
+                            logger.debug(f"⚠️ RPC {rpc_url} вернул статус {response.status_code}")
+                            continue
+                            
+                        data = response.json()
+                        result = data.get("result", "0x0")
+                        
+                        if result and result != "0x0" and not result.endswith("0" * 60):
+                            # Конвертируем из hex в decimal (USDC имеет 6 decimals)
+                            balance_wei = int(result, 16)
+                            balance_usdc = balance_wei / (10 ** 6)  # USDC имеет 6 знаков после запятой
+                            
+                            if balance_usdc > 0:
+                                logger.info(f"✅ Найден свободный USDC: ${balance_usdc:.6f} ({contract_name})")
+                                logger.info(f"   🏦 Адрес: {user_address}")
+                                logger.info(f"   📄 Контракт: {contract_addr}")
+                                logger.info(f"   🌐 RPC: {rpc_url}")
+                                return balance_usdc
+                                
+                    except Exception as e:
+                        logger.debug(f"❌ Ошибка с RPC {rpc_url}: {e}")
+                        continue
+                        
+            logger.debug(f"ℹ️ Свободный USDC не найден для адреса {user_address}")
+            return 0.0
+            
+        except Exception as e:
+            logger.error(f"Ошибка проверки баланса для {user_address}: {e}")
             return None
 
     async def monitor_balance(self):
