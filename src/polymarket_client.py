@@ -146,6 +146,21 @@ class PolymarketClient:
                 else:
                     logger.warning(f"⚠️  Рынок #{i+1} не является словарем: {type(market)}")
             
+            # ПРИНУДИТЕЛЬНОЕ логирование структуры
+            if markets and len(markets) > 0:
+                first_market = markets[0]
+                if isinstance(first_market, dict):
+                    logger.info("=" * 50)
+                    logger.info("🔍 ДЕТАЛЬНАЯ СТРУКТУРА ПЕРВОГО РЫНКА:")
+                    logger.info(f"Тип: {type(first_market)}")
+                    logger.info(f"Количество ключей: {len(first_market.keys())}")
+                    logger.info("Все ключи:")
+                    for key in first_market.keys():
+                        value = first_market[key]
+                        value_str = str(value)[:100] + "..." if len(str(value)) > 100 else str(value)
+                        logger.info(f"  {key} = {value_str}")
+                    logger.info("=" * 50)
+            
             logger.info(f"🎯 ИТОГО ПОЛУЧЕНО: {len(markets)} рынков от Polymarket")
             return markets
                 
