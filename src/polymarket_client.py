@@ -237,73 +237,70 @@ class PolymarketClient:
         logger.warning("Функция get_current_price не реализована и возвращает моковое значение.")
         return 0.5
 
-    def get_account_balance(self) -> Optional[float]:
-        """Получение баланса USDC аккаунта через Polymarket Data API"""
-        if not self.account:
-            logger.warning("Невозможно получить баланс: аккаунт не инициализирован.")
-            return None
-        
+    def get_account_balance(self) -> float:
+        """
+        Получение баланса аккаунта через Polymarket Data API с fallback на RPC
+        """
         try:
-            # Получаем список адресов для проверки
+            logger.info("💰 Получение баланса через Polymarket Data API")
+            
+            # Список адресов для проверки
             addresses_to_check = []
             
-            # Добавляем PROXY адрес если есть
+            # Добавляем proxy адрес если он настроен
             if self.config.polymarket.POLYMARKET_PROXY_ADDRESS:
-                addresses_to_check.append(("PROXY", self.config.polymarket.POLYMARKET_PROXY_ADDRESS))
-                
-            # Добавляем основной адрес
+                addresses_to_check.append(self.config.polymarket.POLYMARKET_PROXY_ADDRESS)
+            
+            # Добавляем main адрес
             main_address = self.get_address()
             if main_address:
-                addresses_to_check.append(("MAIN", main_address))
-                
-            if not addresses_to_check:
-                logger.warning("Не удалось получить адреса для проверки баланса")
-                return None
-                
-            logger.info(f"💰 Получение баланса через Polymarket Data API")
+                addresses_to_check.append(main_address)
+            
             logger.info(f"🔍 Проверяем {len(addresses_to_check)} адресов")
-            for addr_type, addr in addresses_to_check:
+            for i, addr in enumerate(addresses_to_check):
+                addr_type = "PROXY" if i == 0 and self.config.polymarket.POLYMARKET_PROXY_ADDRESS else "MAIN"
                 logger.info(f"   📍 {addr_type}: {addr}")
+            
+            for user_address in addresses_to_check:
+                logger.info(f"🔍 Проверка баланса для {['PROXY', 'MAIN'][addresses_to_check.index(user_address)]} адреса: {user_address}")
                 
-            # Пробуем получить баланс для каждого адреса
-            for addr_type, user_address in addresses_to_check:
-                logger.info(f"🔍 Проверка баланса для {addr_type} адреса: {user_address}")
-                
-                # Способ 1: Получаем общую стоимость позиций через /value API
+                # Пробуем получить общую стоимость позиций
                 positions_value = self._get_positions_value(user_address)
                 
-                # Способ 2: Получаем детали позиций и ищем proxy wallet
+                # Пробуем получить свободный USDC
                 proxy_wallet, free_usdc = self._get_free_usdc_balance(user_address)
                 
-                # Логируем результаты
-                if positions_value is not None:
-                    logger.info(f"📊 Общая стоимость позиций: ${positions_value:.6f}")
+                # Пробуем прямую проверку USDC баланса на самом адресе
+                direct_usdc = self._check_usdc_balance_for_address(user_address)
                 
-                if proxy_wallet:
-                    logger.info(f"🏦 Найден proxy wallet: {proxy_wallet}")
-                
+                logger.info(f"📊 Общая стоимость позиций: ${positions_value or 0:.6f}")
                 if free_usdc is not None:
-                    logger.info(f"💵 Свободный USDC баланс: ${free_usdc:.6f}")
-                    return free_usdc
-                    
-                # Если нет свободного USDC, но есть стоимость позиций
+                    logger.info(f"💵 Свободный USDC (proxy): ${free_usdc:.6f}")
+                if direct_usdc is not None:
+                    logger.info(f"💵 Прямой USDC (сам адрес): ${direct_usdc:.6f}")
+                
+                # Рассчитываем общий баланс
+                total_balance = 0.0
+                
                 if positions_value and positions_value > 0:
-                    logger.info(f"✅ Найдена стоимость позиций: ${positions_value:.6f}")
-                    logger.warning("⚠️ Свободный USDC не найден, но есть активные позиции")
-                    # Возвращаем стоимость позиций как общий баланс
-                    return positions_value
+                    total_balance += positions_value
+                
+                if free_usdc and free_usdc > 0:
+                    total_balance += free_usdc
+                elif direct_usdc and direct_usdc > 0:
+                    total_balance += direct_usdc
+                
+                if total_balance > 0:
+                    logger.info(f"✅ Найден баланс ${total_balance:.6f} на адресе {user_address}")
+                    return total_balance
             
-            # Fallback: используем заглушку
-            logger.warning("⚠️ Реальный баланс не найден через Polymarket Data API")
-            logger.info("🔄 Используется заглушка баланса для тестирования")
-            mock_balance = 1.0  # Заглушка баланса для отличия от реального значения
-            logger.info(f"💰 Заглушка баланса: ${mock_balance:.2f}")
-            
-            return mock_balance
+            # Fallback на старые методы
+            logger.info("🔄 Переход на fallback методы получения баланса")
+            return self._get_balance_fallback()
             
         except Exception as e:
             logger.error(f"Ошибка получения баланса: {e}")
-            return None
+            return 0.0
 
     def _get_positions_value(self, user_address: str) -> Optional[float]:
         """Получение общей USD стоимости всех позиций через Polymarket Data API"""
@@ -475,6 +472,35 @@ class PolymarketClient:
         except Exception as e:
             logger.error(f"Ошибка проверки баланса для {user_address}: {e}")
             return None
+
+    def _get_balance_fallback(self) -> float:
+        """Fallback методы для получения баланса"""
+        try:
+            # Пробуем проверить баланс напрямую для всех адресов
+            addresses_to_try = []
+            
+            # Main адрес
+            if self.account:
+                addresses_to_try.append(self.account.address)
+            
+            # Proxy адрес
+            if self.config.polymarket.POLYMARKET_PROXY_ADDRESS:
+                addresses_to_try.append(self.config.polymarket.POLYMARKET_PROXY_ADDRESS)
+            
+            logger.info(f"🔄 Fallback: проверяем прямой USDC баланс для {len(addresses_to_try)} адресов")
+            
+            for addr in addresses_to_try:
+                usdc_balance = self._check_usdc_balance_for_address(addr)
+                if usdc_balance and usdc_balance > 0:
+                    logger.info(f"✅ Fallback: найден USDC ${usdc_balance:.6f} на {addr}")
+                    return usdc_balance
+            
+            logger.warning("⚠️ Fallback: баланс не найден ни на одном адресе")
+            return 0.0
+            
+        except Exception as e:
+            logger.error(f"Ошибка fallback получения баланса: {e}")
+            return 0.0
 
     async def monitor_balance(self):
         """Мониторинг баланса с уведомлениями о критических изменениях"""
