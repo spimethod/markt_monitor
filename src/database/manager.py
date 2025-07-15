@@ -34,8 +34,13 @@ class DatabaseManager:
             return False
 
         try:
+            # Обрабатываем различные форматы PostgreSQL URL
             if db_url.startswith("postgres://"):
                 db_url = db_url.replace("postgres://", "postgresql+asyncpg://", 1)
+            elif db_url.startswith("postgresql://") and not db_url.startswith("postgresql+asyncpg://"):
+                db_url = db_url.replace("postgresql://", "postgresql+asyncpg://", 1)
+            
+            logger.info(f"Подключение к БД: {db_url[:30]}...")
 
             self.engine = create_async_engine(db_url, echo=False, pool_pre_ping=True, pool_recycle=300)
             self.Session = async_sessionmaker(bind=self.engine, class_=AsyncSession, expire_on_commit=False)
@@ -48,6 +53,7 @@ class DatabaseManager:
             return True
         except Exception as e:
             logger.error(f"Ошибка инициализации базы данных: {e}")
+            logger.error(f"DATABASE_URL format: {db_url[:50]}...")
             self._initialized = False
             return False
 
