@@ -19,59 +19,118 @@ class MarketFilter:
     def __init__(self):
         self.strategy_params = config.get_strategy_params()
         self.processed_markets: Set[str] = set()
+        
+        # Инициализируем кэш для отслеживания новых рынков
+        self.known_markets: Set[str] = set()
+        self.new_markets_timestamps: Dict[str, datetime] = {}
+        
+        # Рынки с активными позициями - не исключаются по времени
+        self.markets_with_positions: Set[str] = set()
+        
+        logger.info("Инициализирован фильтр рынков с кэшем для отслеживания новых рынков")
+
+    def cleanup_old_markets(self):
+        """Очищает устаревшие рынки из кэша (кроме рынков с активными позициями)"""
+        current_time = datetime.utcnow()
+        expired_markets = []
+        
+        for market_id, discovery_time in self.new_markets_timestamps.items():
+            # Не удаляем рынки с активными позициями
+            if hasattr(self, 'markets_with_positions') and market_id in self.markets_with_positions:
+                logger.debug(f"🔒 Рынок {market_id} сохранен в кэше (есть активная позиция)")
+                continue
+                
+            time_diff = current_time - discovery_time
+            if time_diff.total_seconds() > (config.trading.TIME_WINDOW_MINUTES * 60):
+                expired_markets.append(market_id)
+        
+        for market_id in expired_markets:
+            del self.new_markets_timestamps[market_id]
+            
+        if expired_markets:
+            logger.debug(f"🧹 Очищены {len(expired_markets)} устаревших рынков из кэша")
 
     def is_binary_market(self, market_data: Dict) -> bool:
-        return len(market_data.get("outcomes", [])) == 2
+        """Проверяет, что рынок бинарный (2 исхода)"""
+        # Проверяем tokens (новый формат)
+        tokens = market_data.get("tokens", [])
+        if tokens:
+            return len(tokens) == 2
+        
+        # Fallback на outcomes (старый формат)
+        outcomes = market_data.get("outcomes", [])
+        return len(outcomes) == 2
 
     def check_liquidity_requirement(self, market_data: Dict) -> bool:
-        return float(market_data.get("liquidity", 0)) >= config.trading.MIN_LIQUIDITY_USD
+        """Проверяет требования к ликвидности"""
+        # Polymarket /markets API не возвращает liquidity
+        # Вместо этого проверяем, что рынок активен и принимает ордера
+        is_active = market_data.get("active", False)
+        accepts_orders = market_data.get("accepting_orders", False)
+        is_closed = market_data.get("closed", True)
+        
+        # Рынок должен быть активен, принимать ордера и не быть закрытым
+        if is_active and accepts_orders and not is_closed:
+            logger.debug(f"✅ Рынок активен и принимает ордера")
+            return True
+        else:
+            logger.debug(f"❌ Рынок неактивен: active={is_active}, accepts_orders={accepts_orders}, closed={is_closed}")
+            return False
 
     def check_time_window(self, market_data: Dict) -> Tuple[bool, str]:
-        """Проверяет, что рынок создан не позднее TIME_WINDOW_MINUTES назад"""
-        created_at = market_data.get("created_at")
-        if not created_at:
-            # Если время создания неизвестно, пропускаем проверку
-            logger.debug("Время создания рынка неизвестно, пропускаем проверку временного окна")
-            return True, "Время создания неизвестно"
+        """Проверяет, что рынок недавно обнаружен (в рамках 10-минутного окна) или имеет активные позиции"""
         
-        try:
-            # Парсим время создания (поддерживаем разные форматы)
-            if isinstance(created_at, str):
-                # Попробуем разные форматы даты
-                for date_format in ["%Y-%m-%dT%H:%M:%S.%fZ", "%Y-%m-%dT%H:%M:%SZ", "%Y-%m-%d %H:%M:%S"]:
-                    try:
-                        market_created_time = datetime.strptime(created_at, date_format)
-                        break
-                    except ValueError:
-                        continue
-                else:
-                    # Если ни один формат не подошел, используем текущее время
-                    logger.warning(f"Не удалось распарсить время создания рынка: {created_at}")
-                    return True, "Неподдерживаемый формат времени"
-            elif isinstance(created_at, (int, float)):
-                # Unix timestamp
-                market_created_time = datetime.fromtimestamp(created_at)
-            else:
-                logger.warning(f"Неподдерживаемый тип времени создания: {type(created_at)}")
-                return True, "Неподдерживаемый тип времени"
-            
-            # Проверяем временное окно
-            time_diff = datetime.utcnow() - market_created_time
-            time_window_delta = timedelta(minutes=config.trading.TIME_WINDOW_MINUTES)
-            
-            if time_diff <= time_window_delta:
-                logger.debug(f"Рынок создан {time_diff.total_seconds():.0f} сек назад, в пределах окна {config.trading.TIME_WINDOW_MINUTES} мин")
-                return True, f"Рынок в временном окне ({time_diff.total_seconds():.0f}s)"
-            else:
-                logger.debug(f"Рынок создан {time_diff.total_seconds():.0f} сек назад, вне окна {config.trading.TIME_WINDOW_MINUTES} мин")
-                return False, f"Рынок слишком старый ({time_diff.total_seconds():.0f}s > {time_window_delta.total_seconds():.0f}s)"
+        # Получаем ID рынка
+        market_id = market_data.get("question_id") or market_data.get("condition_id") or market_data.get("market_slug")
+        if not market_id:
+            return False, "Отсутствует ID рынка для проверки времени"
+        
+        # Если рынок имеет активные позиции - всегда разрешаем торговлю
+        if hasattr(self, 'markets_with_positions') and market_id in self.markets_with_positions:
+            logger.debug(f"✅ Рынок {market_id} имеет активную позицию - пропускаем проверку времени")
+            return True, "Рынок с активной позицией"
+        
+        # Инициализируем кэш, если его нет
+        if not hasattr(self, 'known_markets'):
+            self.known_markets = set()
+            self.new_markets_timestamps = {}
+            logger.info("Инициализирован кэш рынков для отслеживания новых")
+        
+        current_time = datetime.utcnow()
+        
+        # Если рынок уже известен, проверяем, не старше ли он TIME_WINDOW_MINUTES
+        if market_id in self.known_markets:
+            # Проверяем, есть ли он в списке недавно добавленных
+            if market_id in self.new_markets_timestamps:
+                discovery_time = self.new_markets_timestamps[market_id]
+                time_diff = current_time - discovery_time
                 
-        except Exception as e:
-            logger.warning(f"Ошибка при проверке временного окна: {e}")
-            return True, "Ошибка проверки времени"
+                if time_diff.total_seconds() <= (config.trading.TIME_WINDOW_MINUTES * 60):
+                    logger.debug(f"✅ Рынок обнаружен {time_diff.total_seconds():.0f}s назад, в пределах окна")
+                    return True, f"Недавно обнаружен ({time_diff.total_seconds():.0f}s назад)"
+                else:
+                    # Рынок устарел, удаляем из кэша новых
+                    del self.new_markets_timestamps[market_id]
+                    logger.debug(f"❌ Рынок устарел ({time_diff.total_seconds():.0f}s > {config.trading.TIME_WINDOW_MINUTES * 60}s)")
+                    return False, f"Рынок устарел ({time_diff.total_seconds():.0f}s)"
+            else:
+                # Рынок известен, но не в новых - значит старый
+                return False, "Рынок был обнаружен ранее"
+        
+        # Новый рынок - добавляем в кэш
+        self.known_markets.add(market_id)
+        self.new_markets_timestamps[market_id] = current_time
+        
+        market_question = market_data.get('question', 'Неизвестный рынок')[:50]
+        logger.info(f"🆕 НОВЫЙ РЫНОК обнаружен: {market_question}...")
+        logger.info(f"   🆔 ID: {market_id}")
+        logger.info(f"   ⏰ Время обнаружения: {current_time.strftime('%H:%M:%S')}")
+        
+        return True, "Новый рынок обнаружен"
 
     def should_trade_market(self, market_data: Dict) -> Tuple[bool, str]:
-        market_id = market_data.get("id")
+        # Получаем ID рынка из правильных полей
+        market_id = market_data.get("question_id") or market_data.get("condition_id") or market_data.get("market_slug")
         if not market_id:
             return False, "Отсутствует ID рынка"
 
@@ -82,7 +141,7 @@ class MarketFilter:
             return False, "Не бинарный рынок"
 
         if not self.check_liquidity_requirement(market_data):
-            return False, "Недостаточная ликвидность"
+            return False, "Рынок неактивен или не принимает ордера"
 
         # Проверяем временное окно
         time_check_result, time_reason = self.check_time_window(market_data)
@@ -138,6 +197,9 @@ class TradingEngine:
         logger.info("Запуск мониторинга рынков...")
         while self.is_running:
             try:
+                # Очищаем устаревшие рынки из кэша
+                self.market_filter.cleanup_old_markets()
+                
                 logger.info("🔍 Поиск новых рынков...")
                 markets = self.client.get_markets()
                 
@@ -153,7 +215,8 @@ class TradingEngine:
                 suitable_markets = 0
                 
                 for market in markets:
-                    market_id = market.get("id")
+                    # Получаем ID из правильных полей API
+                    market_id = market.get("question_id") or market.get("condition_id") or market.get("market_slug")
                     market_question = market.get("question", "Неизвестный рынок")
                     
                     logger.debug(f"🎯 Анализ рынка: {market_question[:100]}...")
@@ -165,8 +228,21 @@ class TradingEngine:
                         logger.info(f"✅ ПОДХОДЯЩИЙ РЫНОК найден!")
                         logger.info(f"   📋 Вопрос: {market_question}")
                         logger.info(f"   🆔 ID: {market_id}")
-                        logger.info(f"   💰 Ликвидность: ${market.get('liquidity', 0):.2f}")
-                        logger.info(f"   📊 Объем 24ч: ${market.get('volume24hr', 0):.2f}")
+                        
+                        # Показываем реальную информацию о рынке
+                        logger.info(f"   🎮 Активен: {market.get('active', False)}")
+                        logger.info(f"   💱 Принимает ордера: {market.get('accepting_orders', False)}")
+                        logger.info(f"   🔒 Закрыт: {market.get('closed', False)}")
+                        
+                        # Показываем токены и их цены
+                        tokens = market.get('tokens', [])
+                        if tokens:
+                            for token in tokens:
+                                if isinstance(token, dict):
+                                    outcome = token.get('outcome', 'N/A')
+                                    price = token.get('price', 'N/A')
+                                    logger.info(f"   🎯 {outcome}: цена {price}")
+                        
                         logger.info(f"   ✅ Причина: {reason}")
                         
                         # Проверяем баланс перед торговлей
@@ -242,10 +318,17 @@ class TradingEngine:
         side = "BUY"
         size = position_size_usd / price
 
-        order_result = self.client.place_order(token_id, side, size, price)
+        order_result = await self.client.place_order(token_id, side, size, price, market_data)
         if order_result:
             self.stats["total_trades"] += 1
             logger.info(f"Сделка совершена: {order_result}")
+            
+            # Добавляем рынок в список с активными позициями 
+            # чтобы он не исключался через 10 минут
+            market_id = market_data.get("question_id") or market_data.get("condition_id") or market_data.get("market_slug")
+            if market_id:
+                self.market_filter.markets_with_positions.add(market_id)
+                logger.info(f"📌 Рынок {market_id} добавлен в список с активными позициями")
 
     def _get_target_token_id(self, market_data: Dict) -> Optional[str]:
         for token in market_data.get("tokens", []):
@@ -259,12 +342,45 @@ class TradingEngine:
         logger.info("Запуск мониторинга позиций...")
         while self.is_running:
             try:
-                # Эта логика теперь в PolymarketClient
+                # Проверяем и закрываем позиции
                 await self.client.check_and_close_positions()
+                
+                # Очищаем рынки без активных позиций
+                await self._cleanup_markets_without_positions()
+                
                 await asyncio.sleep(config.trading.POSITION_MONITOR_INTERVAL_SECONDS)
             except Exception as e:
                 logger.error(f"Ошибка мониторинга позиций: {e}")
                 await asyncio.sleep(60)
+
+    async def _cleanup_markets_without_positions(self):
+        """Удаляет рынки из списка активных если для них нет открытых позиций"""
+        try:
+            if not hasattr(self.market_filter, 'markets_with_positions'):
+                return
+                
+            markets_to_remove = []
+            open_positions = await self.client.db_manager.get_open_positions()
+            user_address = self.client.get_address()
+            
+            if not user_address:
+                return
+                
+            user_positions = [p for p in open_positions if p.get('user_address') == user_address]
+            active_market_ids = set(p.get('market_id') for p in user_positions if p.get('market_id'))
+            
+            # Находим рынки в списке активных, но без открытых позиций
+            for market_id in self.market_filter.markets_with_positions:
+                if market_id not in active_market_ids:
+                    markets_to_remove.append(market_id)
+            
+            # Удаляем такие рынки
+            for market_id in markets_to_remove:
+                self.market_filter.markets_with_positions.discard(market_id)
+                logger.info(f"🧹 Рынок {market_id} удален из списка активных (нет открытых позиций)")
+                
+        except Exception as e:
+            logger.error(f"Ошибка очистки рынков без позиций: {e}")
 
     async def _balance_monitor_task(self):
         logger.info("Запуск мониторинга баланса...")

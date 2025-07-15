@@ -6,7 +6,7 @@ import binascii
 import json
 import threading
 import random
-from typing import Dict, Optional, Any
+from typing import Dict, Optional, Any, Tuple
 from datetime import datetime
 
 import requests
@@ -61,20 +61,59 @@ class PolymarketClient:
         """Возвращает адрес аккаунта, если он доступен."""
         return self.account.address if self.account else None
 
-    def place_order(self, token_id: str, side: str, size: float, price: float) -> Optional[Dict]:
+    async def place_order(self, token_id: str, side: str, size: float, price: float, market_data: Optional[Dict] = None) -> Optional[Dict]:
         """
-        Размещает ордер на покупку или продажу.
+        Размещает ордер на покупку или продажу и сохраняет позицию в БД.
         """
         if not self.account:
             logger.error("Невозможно разместить ордер: приватный ключ не установлен.")
             return None
             
         logger.info(f"Размещение ордера: {side} {size} токенов {token_id} по цене {price}")
+        
+        # Генерируем уникальный ID для ордера
+        import uuid
+        order_id = f"order_{int(datetime.now().timestamp())}_{str(uuid.uuid4())[:8]}"
+        
         # Здесь будет логика для реального размещения ордера
         order_data = {
             "token_id": token_id, "price": str(price), "size": str(size),
-            "side": side, "status": "placed", "id": "mock_order_id"
+            "side": side, "status": "placed", "id": order_id
         }
+        
+        # Сохраняем позицию в базу данных
+        try:
+            market_id = None
+            market_name = None
+            if market_data:
+                market_id = market_data.get("question_id") or market_data.get("condition_id") or market_data.get("market_slug")
+                market_name = market_data.get("question", "Неизвестный рынок")[:500]  # Ограничиваем размер
+            
+            position_data = {
+                "id": order_id,
+                "token_id": token_id,
+                "market_id": market_id,
+                "user_address": self.account.address,
+                "side": side,
+                "size": size,
+                "entry_price": price,
+                "current_price": price,
+                "target_profit": self.config.trading.PROFIT_TARGET_PERCENT,
+                "stop_loss": self.config.trading.STOP_LOSS_PERCENT,
+                "status": "open",
+                "market_name": market_name
+            }
+            
+            # Асинхронно сохраняем в БД
+            save_success = await self.db_manager.save_position(position_data)
+            if save_success:
+                logger.info(f"✅ Позиция {order_id} сохранена в БД")
+            else:
+                logger.warning(f"⚠️ Не удалось сохранить позицию {order_id} в БД")
+                
+        except Exception as e:
+            logger.error(f"Ошибка сохранения позиции в БД: {e}")
+        
         return order_data
 
     def get_markets(self) -> list:
@@ -126,19 +165,43 @@ class PolymarketClient:
                 if isinstance(market, dict):
                     logger.info(f"🎯 Рынок #{i+1}:")
                     logger.info(f"   📋 Вопрос: {market.get('question', 'N/A')}")
-                    logger.info(f"   🆔 ID: {market.get('id', 'N/A')}")
-                    logger.info(f"   💰 Ликвидность: ${market.get('liquidity', 0)}")
-                    logger.info(f"   📊 Объем 24ч: ${market.get('volume24hr', 0)}")
-                    logger.info(f"   🎲 Исходы: {len(market.get('outcomes', []))}")
-                    logger.info(f"   📅 Создан: {market.get('created_at', 'N/A')}")
+                    
+                    # Используем правильные поля из API
+                    market_id = market.get('question_id') or market.get('condition_id') or market.get('market_slug', 'N/A')
+                    logger.info(f"   🆔 ID: {market_id}")
+                    
+                    # Polymarket API не возвращает прямые поля liquidity/volume в этом эндпоинте
+                    # Показываем другую полезную информацию
+                    logger.info(f"   🎮 Активен: {market.get('active', False)}")
+                    logger.info(f"   🔒 Закрыт: {market.get('closed', False)}")
+                    logger.info(f"   💱 Принимает ордера: {market.get('accepting_orders', False)}")
+                    
+                    # Считаем количество исходов из tokens
+                    tokens = market.get('tokens', [])
+                    outcomes = market.get('outcomes', [])
+                    total_outcomes = len(tokens) if tokens else len(outcomes)
+                    logger.info(f"   🎲 Исходы: {total_outcomes}")
+                    
+                    # Показываем детали токенов
+                    if tokens:
+                        for j, token in enumerate(tokens[:2]):  # Показываем первые 2
+                            if isinstance(token, dict):
+                                outcome_name = token.get('outcome', f'Исход {j+1}')
+                                price = token.get('price', 'N/A')
+                                logger.info(f"     🎯 {outcome_name}: цена {price}")
+                    
+                    # Время
+                    end_date = market.get('end_date_iso') or market.get('game_start_time', 'N/A')
+                    logger.info(f"   📅 Дата завершения: {end_date}")
                     
                     # ПОЛНАЯ СТРУКТУРА первого рынка для отладки
                     if i == 0:
                         logger.info(f"🔍 ПОЛНАЯ СТРУКТУРА РЫНКА #1:")
                         for key, value in market.items():
-                            logger.info(f"     {key}: {value}")
+                            value_str = str(value)[:100] + "..." if len(str(value)) > 100 else str(value)
+                            logger.info(f"     {key}: {value_str}")
                     
-                    # Детали исходов
+                    # Детали исходов - оставляем для совместимости, но токены важнее
                     outcomes = market.get('outcomes', [])
                     for j, outcome in enumerate(outcomes):
                         if isinstance(outcome, dict):
@@ -194,90 +257,116 @@ class PolymarketClient:
                 logger.warning("Не удалось получить адрес пользователя")
                 return None
                 
-            # Способ 1: Получаем реальный баланс USDC через Polygon RPC
-            try:
-                import requests
-                
-                # USDC контракт на Polygon
-                usdc_contract = "0x2791Bca1f2de4661ED88A30C99A7a9449Aa84174"
-                
-                # Пробуем разные RPC endpoints
-                rpc_endpoints = [
-                    "https://polygon-rpc.com",
-                    "https://rpc.ankr.com/polygon",
-                    "https://polygon.llamarpc.com"
-                ]
-                
-                for rpc_url in rpc_endpoints:
-                    try:
-                        # ERC20 balanceOf function signature: balanceOf(address)
-                        # Функция selector: 0x70a08231
-                        # Адрес пользователя должен быть дополнен до 32 байт (64 hex символа)
-                        user_padded = user_address[2:].lower().zfill(64)  # Убираем 0x и дополняем нулями
-                        data = f"0x70a08231{user_padded}"
-                        
-                        logger.info(f"Запрос баланса USDC для адреса: {user_address}")
-                        logger.info(f"Запрос к RPC: {rpc_url}")
-                        logger.info(f"Контракт USDC: {usdc_contract}")
-                        logger.info(f"Данные запроса: {data}")
-                        
-                        payload = {
-                            "jsonrpc": "2.0",
-                            "method": "eth_call",
-                            "params": [{
-                                "to": usdc_contract,
-                                "data": data
-                            }, "latest"],
-                            "id": 1
-                        }
-                        
-                        response = requests.post(rpc_url, json=payload, timeout=10)
-                        logger.info(f"Статус ответа RPC: {response.status_code}")
-                        
-                        if response.status_code == 200:
-                            data = response.json()
-                            logger.info(f"Ответ RPC: {data}")
-                            
-                            if "result" in data and data["result"] != "0x" and data["result"] != "0x0000000000000000000000000000000000000000000000000000000000000000":
-                                # Получаем баланс в hex, конвертируем в int
-                                balance_hex = data["result"]
-                                balance_wei = int(balance_hex, 16)
-                                logger.info(f"Баланс в hex: {balance_hex}")
-                                logger.info(f"Баланс в wei: {balance_wei}")
-                                
-                                # Конвертируем в USDC (6 decimal places)
-                                balance_usdc = balance_wei / (10 ** 6)
-                                logger.info(f"✅ Получен реальный баланс USDC: ${balance_usdc:.6f} через {rpc_url}")
-                                return balance_usdc
-                            else:
-                                logger.warning(f"RPC {rpc_url} вернул пустой результат для баланса USDC")
-                        else:
-                            logger.warning(f"RPC {rpc_url} запрос неудачен со статусом: {response.status_code}")
-                    except Exception as e:
-                        logger.warning(f"Ошибка с RPC {rpc_url}: {e}")
+            # Способ 1: Прямое обращение к Polygon RPC для получения баланса USDC
+            # USDC контракт на Polygon: 0x2791Bca1f2de4661ED88A30C99A7a9449Aa84174
+            usdc_contract = "0x2791Bca1f2de4661ED88A30C99A7a9449Aa84174"
+            
+            # Список проверенных RPC провайдеров для Polygon
+            rpc_endpoints = [
+                "https://polygon-rpc.com",
+                "https://rpc.ankr.com/polygon",  # Требует API ключ, пропускаем если нет
+                "https://polygon.llamarpc.com",
+                "https://rpc-mainnet.matic.network",  # Официальный Polygon RPC
+                "https://polygon.rpc.blxrbdn.com",    # Блoксер
+                "https://rpc-mainnet.maticvigil.com", # MaticVigil
+                "https://rpc-mainnet.matic.quiknode.pro"  # QuickNode
+            ]
+            
+            # balanceOf(address) функция - 0x70a08231 + адрес (32 байта)
+            balance_of_signature = "0x70a08231"
+            padded_address = user_address[2:].lower().zfill(64)  # Убираем 0x и дополняем до 64 символов
+            data = balance_of_signature + padded_address
+            
+            logger.info(f"🔍 Запрос баланса USDC для адреса: {user_address}")
+            logger.info(f"📋 Контракт USDC: {usdc_contract}")
+            logger.info(f"📊 Данные запроса: {data}")
+            
+            for rpc_url in rpc_endpoints:
+                try:
+                    # Пропускаем ankr если нет API ключа
+                    if "ankr.com" in rpc_url and not hasattr(self.config, 'ankr_api_key'):
+                        logger.debug(f"⏭️ Пропускаем {rpc_url} - нет API ключа")
                         continue
                         
-                logger.warning("Все RPC endpoints показывают нулевой баланс USDC")
+                    logger.info(f"🌐 Запрос к RPC: {rpc_url}")
                     
-            except Exception as e:
-                logger.error(f"Ошибка получения баланса через Polygon RPC: {e}")
+                    rpc_payload = {
+                        "jsonrpc": "2.0",
+                        "method": "eth_call",
+                        "params": [
+                            {
+                                "to": usdc_contract,
+                                "data": data
+                            },
+                            "latest"
+                        ],
+                        "id": 1
+                    }
+                    
+                    headers = {"Content-Type": "application/json"}
+                    
+                    response = requests.post(
+                        rpc_url,
+                        json=rpc_payload,
+                        headers=headers,
+                        timeout=10
+                    )
+                    
+                    logger.info(f"📊 Статус ответа RPC: {response.status_code}")
+                    
+                    if response.status_code == 200:
+                        rpc_data = response.json()
+                        logger.info(f"📋 Ответ RPC: {rpc_data}")
+                        
+                        if 'result' in rpc_data and rpc_data['result']:
+                            hex_balance = rpc_data['result']
+                            
+                            # Проверяем на ошибки
+                            if hex_balance == "0x" or hex_balance.endswith("0" * 60):
+                                logger.warning(f"⚠️ RPC {rpc_url} вернул пустой результат для баланса USDC")
+                                continue
+                                
+                            # Конвертируем из hex в decimal и учитываем 6 decimals у USDC
+                            balance_wei = int(hex_balance, 16)
+                            balance_usdc = balance_wei / (10 ** 6)  # USDC имеет 6 десятичных знаков
+                            
+                            logger.info(f"✅ Успешно получен баланс через {rpc_url}: ${balance_usdc:.6f} USDC")
+                            return balance_usdc
+                        
+                        elif 'error' in rpc_data:
+                            logger.warning(f"⚠️ RPC ошибка от {rpc_url}: {rpc_data['error']}")
+                            continue
+                            
+                    else:
+                        logger.warning(f"⚠️ HTTP ошибка от {rpc_url}: {response.status_code}")
+                        
+                except Exception as e:
+                    logger.warning(f"❌ Ошибка с RPC {rpc_url}: {e}")
+                    continue
+                    
+            logger.warning("⚠️ Все RPC endpoints недоступны или показывают нулевой баланс USDC")
             
             # Способ 2: Gamma API (fallback)
+            logger.info("🔄 Попытка получить баланс через Gamma API...")
             try:
-                response = requests.get(
-                    f"https://gamma-api.polymarket.com/positions?user={user_address}",
-                    timeout=10
-                )
+                gamma_url = f"https://gamma-api.polymarket.com/positions?user={user_address}"
+                logger.debug(f"📡 Gamma API запрос: {gamma_url}")
+                
+                response = requests.get(gamma_url, timeout=10)
+                logger.info(f"📊 Gamma API статус: {response.status_code}")
+                
                 if response.status_code == 200:
                     data = response.json()
+                    logger.debug(f"📋 Gamma API ответ: {type(data)}")
+                    
                     # Ищем свободный USDC баланс
                     if isinstance(data, dict) and 'cash_balance' in data:
                         balance = float(data['cash_balance'])
-                        logger.debug(f"Получен баланс через Gamma API: ${balance}")
+                        logger.info(f"✅ Получен баланс через Gamma API (cash_balance): ${balance:.6f}")
                         return balance
                     elif isinstance(data, dict) and 'free_balance' in data:
                         balance = float(data['free_balance'])
-                        logger.debug(f"Получен свободный баланс: ${balance}")
+                        logger.info(f"✅ Получен баланс через Gamma API (free_balance): ${balance:.6f}")
                         return balance
                     elif isinstance(data, list):
                         # Суммируем свободные средства если есть массив позиций
@@ -286,20 +375,27 @@ class PolymarketClient:
                             if isinstance(position, dict) and position.get('outcome') == 'CASH':
                                 total_cash += float(position.get('balance', 0))
                         if total_cash > 0:
-                            logger.debug(f"Получен баланс из позиций: ${total_cash}")
+                            logger.info(f"✅ Получен баланс через Gamma API (позиции): ${total_cash:.6f}")
                             return total_cash
+                    else:
+                        logger.warning(f"⚠️ Gamma API: неожиданная структура данных")
+                else:
+                    logger.warning(f"⚠️ Gamma API недоступен: HTTP {response.status_code}")
                         
             except Exception as e:
-                logger.debug(f"Gamma API недоступен: {e}")
+                logger.warning(f"❌ Gamma API ошибка: {e}")
             
             # Способ 3: Заглушка с логированием для отладки
-            logger.warning("Все API недоступны - используется моковый баланс")
-            logger.info(f"Адрес кошелька для отладки: {user_address}")
-            logger.info(f"USDC контракт: 0x2791Bca1f2de4661ED88A30C99A7a9449Aa84174")
+            logger.warning("⚠️ Все API недоступны - используется заглушка баланса")
+            logger.info(f"🔍 Адрес кошелька для отладки: {user_address}")
+            logger.info(f"📋 USDC контракт: 0x2791Bca1f2de4661ED88A30C99A7a9449Aa84174")
             
-            # Используем ваш реальный баланс как fallback - будет обновляться при пополнении
-            mock_balance = 0.87  # Ваш текущий баланс
-            logger.debug(f"Мок баланс (обновите в коде после пополнения): ${mock_balance}")
+            # Используем заглушку баланса для отличия от реального значения
+            # ВНИМАНИЕ: Обновите это значение после пополнения баланса!
+            mock_balance = 1.0  # Заглушка баланса для тестирования
+            logger.info(f"💰 Используется заглушка баланса: ${mock_balance:.2f}")
+            logger.info("ℹ️ Обновите mock_balance в коде после пополнения!")
+            
             return mock_balance
             
         except Exception as e:
@@ -434,14 +530,114 @@ class PolymarketClient:
             user_address = self.get_address()
             user_positions = [p for p in open_positions if p.get('user_address') == user_address]
 
-            for trade in user_positions:
-                current_price = self.get_current_price(trade['token_id'])
+            if not user_positions:
+                logger.debug("Нет открытых позиций для проверки")
+                return
+
+            logger.debug(f"Проверка {len(user_positions)} открытых позиций")
+
+            for position in user_positions:
+                current_price = self.get_current_price(position['token_id'])
                 if not current_price:
+                    logger.warning(f"Не удалось получить цену для токена {position['token_id']}")
                     continue
-                await self.db_manager.update_position_price(trade['id'], current_price)
-                # ... остальная логика ...
+                
+                # Обновляем текущую цену в БД
+                await self.db_manager.update_position_price(position['id'], current_price)
+                
+                entry_price = position['entry_price']
+                pnl_percent = ((current_price - entry_price) / entry_price) * 100
+                
+                # Проверяем условия закрытия позиции
+                should_close, reason = self._should_close_position(position, current_price, pnl_percent)
+                
+                if should_close:
+                    # Закрываем позицию
+                    await self._close_position(position, reason, pnl_percent)
+                    
+                    # Удаляем рынок из списка с активными позициями если это была последняя позиция
+                    await self._cleanup_market_from_active_positions(position['market_id'])
+                else:
+                    logger.debug(f"Позиция {position['id']}: PnL {pnl_percent:.2f}%, цена ${current_price:.4f}")
+
         except Exception as e:
             logger.error(f"Ошибка при проверке и закрытии позиций: {e}")
+
+    def _should_close_position(self, position: Dict, current_price: float, pnl_percent: float) -> Tuple[bool, str]:
+        """Определяет, нужно ли закрыть позицию"""
+        
+        # Проверка на прибыль
+        target_profit = position.get('target_profit', self.config.trading.PROFIT_TARGET_PERCENT)
+        if pnl_percent >= target_profit:
+            return True, f"Достигнута целевая прибыль {target_profit:.1f}%"
+        
+        # Проверка на стоп-лосс
+        stop_loss = position.get('stop_loss', self.config.trading.STOP_LOSS_PERCENT)
+        if pnl_percent <= stop_loss:
+            return True, f"Сработал стоп-лосс {stop_loss:.1f}%"
+        
+        # Проверка на время
+        created_at = datetime.fromisoformat(position['created_at'].replace('Z', '+00:00'))
+        hours_open = (datetime.utcnow().replace(tzinfo=created_at.tzinfo) - created_at).total_seconds() / 3600
+        max_hours = self.config.trading.MAX_POSITION_HOURS
+        
+        if hours_open >= max_hours:
+            return True, f"Превышено максимальное время удержания ({max_hours}ч)"
+        
+        return False, "Условия закрытия не выполнены"
+
+    async def _close_position(self, position: Dict, reason: str, pnl_percent: float):
+        """Закрывает позицию"""
+        position_id = position['id']
+        
+        try:
+            logger.info(f"🔴 Закрытие позиции {position_id}: {reason}")
+            logger.info(f"📊 PnL: {pnl_percent:.2f}%")
+            
+            # Здесь будет логика реального закрытия позиции через API
+            # Пока просто обновляем статус в БД
+            
+            pnl_amount = (position['size'] * position['entry_price']) * (pnl_percent / 100)
+            
+            await self.db_manager.close_position(position_id, reason, pnl_amount)
+            
+            # Отправляем уведомление в Telegram
+            from src.telegram_bot import telegram_notifier
+            await telegram_notifier.send_profit_notification({
+                'order_id': position_id,
+                'profit_percent': pnl_percent,
+                'pnl_amount': pnl_amount,
+                'reason': reason
+            })
+            
+            logger.info(f"✅ Позиция {position_id} успешно закрыта")
+            
+        except Exception as e:
+            logger.error(f"Ошибка закрытия позиции {position_id}: {e}")
+
+    async def _cleanup_market_from_active_positions(self, market_id: Optional[str]):
+        """Удаляет рынок из списка активных если нет открытых позиций"""
+        if not market_id:
+            return
+            
+        try:
+            # Проверяем, есть ли еще открытые позиции для этого рынка
+            open_positions = await self.db_manager.get_open_positions()
+            user_address = self.get_address()
+            market_positions = [p for p in open_positions 
+                              if p.get('user_address') == user_address and p.get('market_id') == market_id]
+            
+            if not market_positions:
+                # Нет больше позиций для этого рынка - удаляем из активных
+                # Этот код будет вызван из торгового движка
+                logger.info(f"🧹 Удаляем рынок {market_id} из списка активных (нет открытых позиций)")
+                return True
+            
+            return False
+            
+        except Exception as e:
+            logger.error(f"Ошибка очистки рынка {market_id}: {e}")
+            return False
 
     def _start_websocket_listener(self):
         """Запускает WebSocket слушатель в отдельном потоке с автоматическим переподключением."""
@@ -492,20 +688,49 @@ class PolymarketClient:
                 
                 # Извлекаем asset_ids из первых 10 рынков (чтобы не перегружать)
                 asset_ids = []
-                for market in markets[:10]:
+                logger.info(f"🔍 Извлечение asset_ids из {min(len(markets), 10)} рынков...")
+                
+                for i, market in enumerate(markets[:10]):
+                    market_question = market.get('question', 'Неизвестный рынок')[:50]
+                    logger.debug(f"📊 Рынок #{i+1}: {market_question}")
+                    
+                    # Сначала пробуем outcomes (старый формат)
                     outcomes = market.get('outcomes', [])
-                    for outcome in outcomes:
-                        asset_id = outcome.get('asset_id')
-                        if asset_id:
-                            asset_ids.append(asset_id)
+                    if outcomes:
+                        logger.debug(f"   📋 Найдены outcomes: {len(outcomes)}")
+                        for j, outcome in enumerate(outcomes):
+                            asset_id = outcome.get('asset_id')
+                            if asset_id:
+                                asset_ids.append(asset_id)
+                                logger.debug(f"   ✅ Asset ID #{j+1}: {asset_id[:20]}...")
+                    
+                    # Затем пробуем tokens (новый формат)
+                    tokens = market.get('tokens', [])
+                    if tokens:
+                        logger.debug(f"   🎯 Найдены tokens: {len(tokens)}")
+                        for j, token in enumerate(tokens):
+                            if isinstance(token, dict):
+                                # Ищем token_id как asset_id
+                                token_id = token.get('token_id')
+                                if token_id:
+                                    asset_ids.append(token_id)
+                                    logger.debug(f"   ✅ Token ID #{j+1}: {token_id[:20]}...")
+                            elif isinstance(token, str):
+                                # Если token - это просто строка
+                                asset_ids.append(token)
+                                logger.debug(f"   ✅ Token #{j+1}: {token[:20]}...")
+                
+                # Убираем дубликаты
+                asset_ids = list(set(asset_ids))
+                logger.info(f"🎯 Собрано уникальных asset_ids: {len(asset_ids)}")
                 
                 if not asset_ids:
-                    logger.warning("Не найдены asset_ids для подписки, используется HTTP polling")
+                    logger.warning("❌ Не найдены asset_ids для подписки, используется HTTP polling")
                     await self._http_polling_fallback()
                     await asyncio.sleep(60)
                     continue
                 
-                logger.info(f"Подписка на {len(asset_ids)} asset_ids через WebSocket")
+                logger.info(f"🚀 Подписка на {len(asset_ids)} asset_ids через WebSocket")
                 
                 # Современный подход с async for для автоматического переподключения
                 async for websocket in websockets.connect(
@@ -548,13 +773,26 @@ class PolymarketClient:
                         async for message in websocket:
                             try:
                                 data = json.loads(message)
-                                # Фильтруем только сообщения о новых рынках или изменениях цен
-                                if data.get('event_type') in ['book', 'price_change', 'last_trade_price']:
-                                    await self.message_handler(data)
+                                logger.debug(f"📨 WebSocket сообщение: {type(data)} - {str(data)[:200]}")
+                                
+                                # Обрабатываем разные форматы сообщений
+                                if isinstance(data, dict):
+                                    # Если сообщение - словарь, фильтруем по типу события
+                                    if data.get('event_type') in ['book', 'price_change', 'last_trade_price']:
+                                        await self.message_handler(data)
+                                elif isinstance(data, list):
+                                    # Если сообщение - список, обрабатываем каждый элемент
+                                    for item in data:
+                                        if isinstance(item, dict) and item.get('event_type') in ['book', 'price_change', 'last_trade_price']:
+                                            await self.message_handler(item)
+                                else:
+                                    logger.debug(f"🤷 Неизвестный формат WebSocket сообщения: {type(data)}")
+                                    
                             except json.JSONDecodeError:
-                                logger.warning(f"Не удалось декодировать WebSocket сообщение: {message[:100]}")
+                                logger.warning(f"❌ Не удалось декодировать WebSocket сообщение: {message[:100]}")
                             except Exception as e:
-                                logger.error(f"Ошибка обработки WebSocket сообщения: {e}")
+                                logger.error(f"❌ Ошибка обработки WebSocket сообщения: {e}")
+                                logger.debug(f"🔍 Проблемное сообщение: {message[:500]}")
                         
                         # Отменяем ping задачу при выходе из цикла
                         ping_task.cancel()
