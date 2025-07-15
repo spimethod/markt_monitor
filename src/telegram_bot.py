@@ -371,12 +371,21 @@ class TelegramNotifier:
             fallback_balance = self._get_current_balance() or 0
             balance_text = f"💰 <b>Баланс (fallback):</b> ${fallback_balance:.2f}"
 
+        # Получаем статус базы данных
+        db_status_text = ""
+        if self.trading_engine and hasattr(self.trading_engine, "client") and hasattr(self.trading_engine.client, "db_manager"):
+            db_status = self.trading_engine.client.db_manager.get_database_status()
+            db_emoji = "🗄️" if db_status["engine_type"] == "PostgreSQL" else "📁" if db_status["engine_type"] == "SQLite" else "❌"
+            db_status_text = f"\n{db_emoji} <b>База данных:</b> {db_status['engine_type']}"
+            if db_status.get("using_sqlite_fallback"):
+                db_status_text += " (fallback)"
+
         text = f"""
 📊 <b>Статус бота</b>
 
 🤖 <b>Состояние:</b> {self.bot_status}
 🔄 <b>Торговля:</b> {'Включена' if stats.get('is_trading_enabled', False) else 'Отключена'}
-📈 <b>Открытых позиций:</b> {stats.get('open_positions', 0)}
+📈 <b>Открытых позиций:</b> {stats.get('open_positions', 0)}{db_status_text}
 {balance_text}
 
 📋 <b>Сегодня:</b>
@@ -672,12 +681,21 @@ class TelegramNotifier:
             fallback_balance = self._get_current_balance() or 0
             balance_text = f"💰 <b>Баланс (fallback):</b> ${fallback_balance:.2f}"
 
+        # Получаем статус базы данных
+        db_status_text = ""
+        if self.trading_engine and hasattr(self.trading_engine, "client") and hasattr(self.trading_engine.client, "db_manager"):
+            db_status = self.trading_engine.client.db_manager.get_database_status()
+            db_emoji = "🗄️" if db_status["engine_type"] == "PostgreSQL" else "📁" if db_status["engine_type"] == "SQLite" else "❌"
+            db_status_text = f"\n{db_emoji} <b>База данных:</b> {db_status['engine_type']}"
+            if db_status.get("using_sqlite_fallback"):
+                db_status_text += " (fallback)"
+
         text = f"""
 📊 <b>Статус бота</b>
 
 🤖 <b>Состояние:</b> {self.bot_status}
 🔄 <b>Торговля:</b> {'Включена' if stats.get('is_trading_enabled', False) else 'Отключена'}
-📈 <b>Открытых позиций:</b> {stats.get('open_positions', 0)}
+📈 <b>Открытых позиций:</b> {stats.get('open_positions', 0)}{db_status_text}
 {balance_text}
 
 📋 <b>Сегодня:</b>

@@ -1,6 +1,7 @@
 """
 Менеджер базы данных для работы с позициями
 """
+import asyncio
 from datetime import datetime
 from typing import List, Optional, Dict, Any
 from loguru import logger
@@ -20,12 +21,13 @@ class DatabaseManager:
         self._initialized = False
         self.engine: Optional[Any] = None
         self.Session: Optional[async_sessionmaker[AsyncSession]] = None
+        self._using_sqlite_fallback = False
 
         if not config.database.DATABASE_URL:
             logger.error("DATABASE_URL не настроен. База данных не будет использоваться.")
 
     async def initialize(self) -> bool:
-        """Инициализация подключения к базе данных"""
+        """Инициализация подключения к базе данных с retry и fallback"""
         if self._initialized:
             return True
         
@@ -33,27 +35,99 @@ class DatabaseManager:
         if not db_url:
             return False
 
-        try:
-            # Обрабатываем различные форматы PostgreSQL URL
-            if db_url.startswith("postgres://"):
-                db_url = db_url.replace("postgres://", "postgresql+asyncpg://", 1)
-            elif db_url.startswith("postgresql://") and not db_url.startswith("postgresql+asyncpg://"):
-                db_url = db_url.replace("postgresql://", "postgresql+asyncpg://", 1)
+        # Проверяем тип базы данных
+        is_postgres = db_url.startswith(("postgres://", "postgresql://"))
+        
+        if is_postgres:
+            # Пробуем PostgreSQL с таймаутами и retry
+            success = await self._initialize_postgres(db_url)
+            if success:
+                return True
             
-            logger.info(f"Подключение к БД: {db_url[:30]}...")
+            # Fallback на SQLite если PostgreSQL не работает
+            logger.warning("PostgreSQL недоступен, переключаемся на SQLite fallback")
+            return await self._initialize_sqlite_fallback()
+        else:
+            # Инициализируем SQLite напрямую
+            return await self._initialize_sqlite(db_url)
 
-            self.engine = create_async_engine(db_url, echo=False, pool_pre_ping=True, pool_recycle=300)
+    async def _initialize_postgres(self, db_url: str, max_retries: int = 3) -> bool:
+        """Инициализация PostgreSQL с retry механизмом"""
+        # Обрабатываем различные форматы PostgreSQL URL
+        if db_url.startswith("postgres://"):
+            db_url = db_url.replace("postgres://", "postgresql+asyncpg://", 1)
+        elif db_url.startswith("postgresql://") and not db_url.startswith("postgresql+asyncpg://"):
+            db_url = db_url.replace("postgresql://", "postgresql+asyncpg://", 1)
+        
+        for attempt in range(max_retries):
+            try:
+                logger.info(f"Попытка {attempt + 1}/{max_retries} подключения к PostgreSQL: {db_url[:30]}...")
+
+                # Создаем engine с таймаутами
+                self.engine = create_async_engine(
+                    db_url, 
+                    echo=False, 
+                    pool_pre_ping=True, 
+                    pool_recycle=300,
+                    connect_args={
+                        "command_timeout": 10,  # 10 секунд на команду
+                        "server_settings": {
+                            "application_name": "polymarket_bot",
+                        }
+                    }
+                )
+                
+                self.Session = async_sessionmaker(bind=self.engine, class_=AsyncSession, expire_on_commit=False)
+
+                # Проверяем подключение с таймаутом
+                async with asyncio.timeout(15):  # 15 секунд на подключение и создание таблиц
+                    async with self.engine.begin() as conn:
+                        await conn.run_sync(Base.metadata.create_all)
+
+                self._initialized = True
+                logger.info("PostgreSQL база данных успешно инициализирована")
+                return True
+                
+            except asyncio.TimeoutError:
+                logger.warning(f"Таймаут подключения к PostgreSQL (попытка {attempt + 1}/{max_retries})")
+                if self.engine:
+                    await self.engine.dispose()
+                    self.engine = None
+                if attempt < max_retries - 1:
+                    await asyncio.sleep(2 ** attempt)  # Exponential backoff
+            except Exception as e:
+                logger.warning(f"Ошибка подключения к PostgreSQL (попытка {attempt + 1}/{max_retries}): {e}")
+                if self.engine:
+                    await self.engine.dispose()
+                    self.engine = None
+                if attempt < max_retries - 1:
+                    await asyncio.sleep(2 ** attempt)  # Exponential backoff
+
+        return False
+
+    async def _initialize_sqlite_fallback(self) -> bool:
+        """Fallback на SQLite если PostgreSQL недоступен"""
+        sqlite_url = "sqlite+aiosqlite:///./bot.db"
+        logger.info("Инициализируем SQLite fallback базу данных...")
+        self._using_sqlite_fallback = True
+        return await self._initialize_sqlite(sqlite_url)
+
+    async def _initialize_sqlite(self, db_url: str) -> bool:
+        """Инициализация SQLite базы данных"""
+        try:
+            logger.info(f"Подключение к SQLite: {db_url}")
+
+            self.engine = create_async_engine(db_url, echo=False)
             self.Session = async_sessionmaker(bind=self.engine, class_=AsyncSession, expire_on_commit=False)
 
             async with self.engine.begin() as conn:
                 await conn.run_sync(Base.metadata.create_all)
 
             self._initialized = True
-            logger.info("База данных успешно инициализирована")
+            logger.info("SQLite база данных успешно инициализирована")
             return True
         except Exception as e:
-            logger.error(f"Ошибка инициализации базы данных: {e}")
-            logger.error(f"DATABASE_URL format: {db_url[:50]}...")
+            logger.error(f"Ошибка инициализации SQLite: {e}")
             self._initialized = False
             return False
 
@@ -64,7 +138,7 @@ class DatabaseManager:
             logger.info("Подключение к базе данных закрыто")
 
     async def _get_session(self) -> Optional[AsyncSession]:
-        """Получение сессии. Если сессии нет, пытается инициализировать подключение."""
+        """Получение сессии базы данных"""
         if not self._initialized:
             await self.initialize()
         
@@ -145,3 +219,11 @@ class DatabaseManager:
             except Exception as e:
                 logger.error(f"Ошибка получения позиции: {e}")
                 return None 
+
+    def get_database_status(self) -> Dict[str, Any]:
+        """Получение статуса базы данных"""
+        return {
+            "initialized": self._initialized,
+            "using_sqlite_fallback": self._using_sqlite_fallback,
+            "engine_type": "PostgreSQL" if not self._using_sqlite_fallback and self._initialized else "SQLite" if self._initialized else "None"
+        } 
