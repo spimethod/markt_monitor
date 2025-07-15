@@ -138,6 +138,7 @@ class TradingEngine:
         logger.info("Запуск мониторинга рынков...")
         while self.is_running:
             try:
+                logger.info("🔍 Поиск новых рынков...")
                 markets = self.client.get_markets()
                 
                 # Проверяем, что получили список
@@ -146,21 +147,70 @@ class TradingEngine:
                     await asyncio.sleep(60)
                     continue
                 
-                logger.debug(f"Обрабатываем {len(markets)} рынков")
+                logger.info(f"📊 Получено {len(markets)} рынков для анализа")
+                
+                new_markets_found = 0
+                suitable_markets = 0
                 
                 for market in markets:
-                    # Проверяем, что market - это словарь
-                    if not isinstance(market, dict):
-                        logger.warning(f"Рынок не является словарем: {type(market)} - {str(market)[:100]}")
-                        continue
-                        
+                    market_id = market.get("id")
+                    market_question = market.get("question", "Неизвестный рынок")
+                    
+                    logger.debug(f"🎯 Анализ рынка: {market_question[:100]}...")
+                    
                     should_trade, reason = self.market_filter.should_trade_market(market)
+                    
                     if should_trade:
-                        await self._attempt_trade(market)
+                        suitable_markets += 1
+                        logger.info(f"✅ ПОДХОДЯЩИЙ РЫНОК найден!")
+                        logger.info(f"   📋 Вопрос: {market_question}")
+                        logger.info(f"   🆔 ID: {market_id}")
+                        logger.info(f"   💰 Ликвидность: ${market.get('liquidity', 0):.2f}")
+                        logger.info(f"   📊 Объем 24ч: ${market.get('volume24hr', 0):.2f}")
+                        logger.info(f"   ✅ Причина: {reason}")
                         
-                await asyncio.sleep(60)
+                        # Проверяем баланс перед торговлей
+                        current_balance = self.client.get_account_balance()
+                        logger.info(f"   💳 Текущий баланс: ${current_balance:.6f}")
+                        
+                        if not self.is_trading_enabled:
+                            logger.warning(f"   ⚠️  Торговля отключена (нет приватного ключа)")
+                            await telegram_notifier.send_new_market_notification(market)
+                            continue
+                            
+                        if current_balance and current_balance >= 0.01:  # Минимум 1 цент
+                            logger.info(f"   🚀 Попытка торговли...")
+                            await self._attempt_trade(market)
+                        else:
+                            logger.warning(f"   💸 Недостаточно средств для торговли (баланс: ${current_balance:.6f})")
+                            await telegram_notifier.send_message(
+                                f"💡 <b>Найден подходящий рынок</b>\n\n"
+                                f"📋 {market_question[:200]}\n"
+                                f"💰 Ликвидность: ${market.get('liquidity', 0):.2f}\n\n"
+                                f"⚠️ <b>Торговля пропущена</b>\n"
+                                f"💸 Недостаточно средств (${current_balance:.6f})"
+                            )
+                        
+                        new_markets_found += 1
+                    else:
+                        logger.debug(f"   ❌ Пропущен: {reason}")
+                
+                # Сводка по циклу
+                if new_markets_found > 0:
+                    logger.info(f"🎯 ИТОГ ПОИСКА: найдено {suitable_markets} подходящих рынков из {len(markets)}")
+                    await telegram_notifier.send_message(
+                        f"🔍 <b>Поиск завершен</b>\n\n"
+                        f"📊 Проанализировано: {len(markets)} рынков\n"
+                        f"✅ Подходящих: {suitable_markets}\n"
+                        f"🆕 Новых: {new_markets_found}"
+                    )
+                else:
+                    logger.info(f"🔍 Поиск завершен: проанализировано {len(markets)} рынков, новых подходящих не найдено")
+                
+                await asyncio.sleep(60)  # Проверяем каждую минуту
+                
             except Exception as e:
-                logger.error(f"Ошибка мониторинга рынков: {e}")
+                logger.error(f"Ошибка в мониторинге рынков: {e}")
                 await asyncio.sleep(60)
 
     async def _attempt_trade(self, market_data: Dict):

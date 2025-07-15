@@ -81,35 +81,59 @@ class PolymarketClient:
         """Получает список активных рынков"""
         try:
             url = "https://clob.polymarket.com/markets"
+            logger.info(f"🔗 Запрос рынков: {url}")
+            
             response = self._make_request("GET", url)
             
             if not response:
-                logger.warning("Не удалось получить ответ от API рынков")
-                return []
-            
-            data = response.json()
-            
-            # Проверяем, что получили именно список
-            if isinstance(data, list):
-                logger.debug(f"Получено {len(data)} рынков из API")
-                return data
-            elif isinstance(data, dict):
-                # Если API вернул объект с рынками внутри
-                if 'data' in data and isinstance(data['data'], list):
-                    logger.debug(f"Получено {len(data['data'])} рынков из API (в поле data)")
-                    return data['data']
-                elif 'markets' in data and isinstance(data['markets'], list):
-                    logger.debug(f"Получено {len(data['markets'])} рынков из API (в поле markets)")
-                    return data['markets']
-                else:
-                    logger.warning(f"API вернул объект без массива рынков: {list(data.keys())}")
-                    return []
-            else:
-                logger.warning(f"API вернул неожиданный тип данных: {type(data)} - {str(data)[:100]}")
+                logger.warning("❌ Polymarket API не вернул данные")
                 return []
                 
+            logger.info(f"✅ Получен ответ от Polymarket API")
+            logger.info(f"📊 Тип ответа: {type(response)}")
+            
+            if isinstance(response, dict):
+                # Если ответ - словарь, ищем список в нем
+                if 'data' in response:
+                    markets = response['data']
+                    logger.info(f"📋 Найдены рынки в response['data']: {len(markets)} штук")
+                elif 'markets' in response:
+                    markets = response['markets']  
+                    logger.info(f"📋 Найдены рынки в response['markets']: {len(markets)} штук")
+                else:
+                    logger.warning(f"⚠️  Неожиданная структура ответа: {list(response.keys())}")
+                    return []
+            elif isinstance(response, list):
+                markets = response
+                logger.info(f"📋 Получен прямой список рынков: {len(markets)} штук")
+            else:
+                logger.warning(f"❌ Неожиданный тип ответа: {type(response)}")
+                return []
+            
+            # Логируем детали первых 3 рынков
+            for i, market in enumerate(markets[:3]):
+                if isinstance(market, dict):
+                    logger.info(f"🎯 Рынок #{i+1}:")
+                    logger.info(f"   📋 Вопрос: {market.get('question', 'N/A')}")
+                    logger.info(f"   🆔 ID: {market.get('id', 'N/A')}")
+                    logger.info(f"   💰 Ликвидность: ${market.get('liquidity', 0)}")
+                    logger.info(f"   📊 Объем 24ч: ${market.get('volume24hr', 0)}")
+                    logger.info(f"   🎲 Исходы: {len(market.get('outcomes', []))}")
+                    logger.info(f"   📅 Создан: {market.get('created_at', 'N/A')}")
+                    
+                    # Детали исходов
+                    outcomes = market.get('outcomes', [])
+                    for j, outcome in enumerate(outcomes):
+                        if isinstance(outcome, dict):
+                            logger.info(f"     Исход {j+1}: {outcome.get('name', 'N/A')} (asset_id: {outcome.get('asset_id', 'N/A')})")
+                else:
+                    logger.warning(f"⚠️  Рынок #{i+1} не является словарем: {type(market)}")
+            
+            logger.info(f"🎯 ИТОГО ПОЛУЧЕНО: {len(markets)} рынков от Polymarket")
+            return markets
+                
         except Exception as e:
-            logger.error(f"Ошибка получения рынков: {e}")
+            logger.error(f"❌ Ошибка получения рынков: {e}")
             return []
 
     def get_current_price(self, token_id: str) -> Optional[float]:
@@ -146,6 +170,11 @@ class PolymarketClient:
                 user_padded = user_address[2:].lower().zfill(64)  # Убираем 0x и дополняем нулями
                 data = f"0x70a08231{user_padded}"
                 
+                logger.info(f"Запрос баланса USDC для адреса: {user_address}")
+                logger.info(f"Запрос к RPC: {rpc_url}")
+                logger.info(f"Контракт USDC: {usdc_contract}")
+                logger.info(f"Данные запроса: {data}")
+                
                 payload = {
                     "jsonrpc": "2.0",
                     "method": "eth_call",
@@ -157,22 +186,30 @@ class PolymarketClient:
                 }
                 
                 response = requests.post(rpc_url, json=payload, timeout=10)
+                logger.info(f"Статус ответа RPC: {response.status_code}")
+                
                 if response.status_code == 200:
                     data = response.json()
+                    logger.info(f"Ответ RPC: {data}")
+                    
                     if "result" in data and data["result"] != "0x":
                         # Получаем баланс в hex, конвертируем в int
-                        balance_wei = int(data["result"], 16)
+                        balance_hex = data["result"]
+                        balance_wei = int(balance_hex, 16)
+                        logger.info(f"Баланс в hex: {balance_hex}")
+                        logger.info(f"Баланс в wei: {balance_wei}")
+                        
                         # Конвертируем в USDC (6 decimal places)
                         balance_usdc = balance_wei / (10 ** 6)
                         logger.info(f"Получен реальный баланс USDC: ${balance_usdc:.6f}")
                         return balance_usdc
                     else:
-                        logger.warning(f"Polygon RPC не вернул результат: {data}")
+                        logger.warning("RPC вернул пустой результат для баланса USDC")
                 else:
-                    logger.warning(f"Polygon RPC недоступен: HTTP {response.status_code}")
+                    logger.warning(f"RPC запрос неудачен со статусом: {response.status_code}")
                     
             except Exception as e:
-                logger.debug(f"Polygon RPC недоступен: {e}")
+                logger.error(f"Ошибка получения баланса через Polygon RPC: {e}")
             
             # Способ 2: Gamma API (fallback)
             try:
