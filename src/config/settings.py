@@ -124,12 +124,6 @@ class PolymarketConfig(BaseSettings):
     CHAIN_ID: int = Field(default=137, description="Polygon Chain ID")
 
 
-class Web3Config(BaseSettings):
-    """Настройки Web3"""
-    model_config = SettingsConfigDict(env_prefix="", env_file=".env", extra="ignore")
-    RPC_URL: str = Field(default="https://polygon-mainnet.infura.io/v3/your_infura_id", description="URL для RPC ноды")
-
-
 class TelegramConfig(BaseSettings):
     """Telegram bot settings."""
 
@@ -202,7 +196,6 @@ class Config:
         self.telegram = TelegramConfig()
         self.database = DatabaseConfig()
         self.app = AppConfig()
-        self.web3 = Web3Config()
 
         # Настраиваем логирование
         self._setup_logging()

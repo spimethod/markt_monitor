@@ -11,7 +11,7 @@ import requests
 import websockets
 from eth_account.signers.local import LocalAccount
 from loguru import logger
-from web3 import Account, Web3
+from web3 import Account
 from websockets.client import WebSocketClientProtocol
 
 from src.config.settings import Config
@@ -32,7 +32,6 @@ class PolymarketClient:
     def __init__(self, message_handler=default_message_handler):
         """Инициализация клиента"""
         self.config: Config = config_instance
-        self.web3 = Web3(Web3.HTTPProvider(self.config.web3.RPC_URL))
         self.db_manager = DatabaseManager()
         self.account: Optional[LocalAccount] = None
         self.is_connected = False
