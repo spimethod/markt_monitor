@@ -308,6 +308,11 @@ class PolymarketClient:
     def _get_positions_value(self, user_address: str) -> Optional[float]:
         """Получение общей USD стоимости всех позиций через Polymarket Data API"""
         try:
+            # Валидация адреса
+            if len(user_address) != 42 or not user_address.startswith("0x"):
+                logger.warning(f"⚠️ Некорректный формат адреса: {user_address} (длина: {len(user_address)}, ожидается 42)")
+                return None
+            
             # API endpoint для получения общей стоимости позиций
             value_url = f"https://data-api.polymarket.com/value?user={user_address}"
             logger.debug(f"📡 Запрос к Data API (value): {value_url}")
@@ -315,7 +320,10 @@ class PolymarketClient:
             response = requests.get(value_url, timeout=10)
             logger.debug(f"📊 Data API (value) статус: {response.status_code}")
             
-            if response.status_code == 200:
+            if response.status_code == 400:
+                logger.warning(f"⚠️ Data API (value) вернул 400: возможно некорректный адрес {user_address}")
+                return None
+            elif response.status_code == 200:
                 data = response.json()
                 logger.debug(f"📋 Data API (value) ответ: {data}")
                 
@@ -346,6 +354,11 @@ class PolymarketClient:
         Возвращает: (proxy_wallet_address, free_usdc_balance)
         """
         try:
+            # Валидация адреса
+            if len(user_address) != 42 or not user_address.startswith("0x"):
+                logger.warning(f"⚠️ Некорректный формат адреса: {user_address} (длина: {len(user_address)}, ожидается 42)")
+                return None, None
+            
             # API endpoint для получения детальных позиций
             positions_url = f"https://data-api.polymarket.com/positions?user={user_address}"
             logger.debug(f"📡 Запрос к Data API (positions): {positions_url}")
@@ -353,7 +366,10 @@ class PolymarketClient:
             response = requests.get(positions_url, timeout=10)
             logger.debug(f"📊 Data API (positions) статус: {response.status_code}")
             
-            if response.status_code == 200:
+            if response.status_code == 400:
+                logger.warning(f"⚠️ Data API (positions) вернул 400: возможно некорректный адрес {user_address}")
+                return None, None
+            elif response.status_code == 200:
                 data = response.json()
                 logger.debug(f"📋 Data API (positions) ответ: {type(data)} с {len(data) if isinstance(data, list) else 'неизвестным'} элементами")
                 
