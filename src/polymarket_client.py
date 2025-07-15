@@ -132,6 +132,12 @@ class PolymarketClient:
                     logger.info(f"   🎲 Исходы: {len(market.get('outcomes', []))}")
                     logger.info(f"   📅 Создан: {market.get('created_at', 'N/A')}")
                     
+                    # ПОЛНАЯ СТРУКТУРА первого рынка для отладки
+                    if i == 0:
+                        logger.info(f"🔍 ПОЛНАЯ СТРУКТУРА РЫНКА #1:")
+                        for key, value in market.items():
+                            logger.info(f"     {key}: {value}")
+                    
                     # Детали исходов
                     outcomes = market.get('outcomes', [])
                     for j, outcome in enumerate(outcomes):
@@ -180,52 +186,63 @@ class PolymarketClient:
                 # USDC контракт на Polygon
                 usdc_contract = "0x2791Bca1f2de4661ED88A30C99A7a9449Aa84174"
                 
-                # Polygon RPC endpoint
-                rpc_url = "https://polygon-rpc.com"
+                # Пробуем разные RPC endpoints
+                rpc_endpoints = [
+                    "https://polygon-rpc.com",
+                    "https://rpc.ankr.com/polygon",
+                    "https://polygon.llamarpc.com"
+                ]
                 
-                # ERC20 balanceOf function signature: balanceOf(address)
-                # Функция selector: 0x70a08231
-                # Адрес пользователя должен быть дополнен до 32 байт (64 hex символа)
-                user_padded = user_address[2:].lower().zfill(64)  # Убираем 0x и дополняем нулями
-                data = f"0x70a08231{user_padded}"
-                
-                logger.info(f"Запрос баланса USDC для адреса: {user_address}")
-                logger.info(f"Запрос к RPC: {rpc_url}")
-                logger.info(f"Контракт USDC: {usdc_contract}")
-                logger.info(f"Данные запроса: {data}")
-                
-                payload = {
-                    "jsonrpc": "2.0",
-                    "method": "eth_call",
-                    "params": [{
-                        "to": usdc_contract,
-                        "data": data
-                    }, "latest"],
-                    "id": 1
-                }
-                
-                response = requests.post(rpc_url, json=payload, timeout=10)
-                logger.info(f"Статус ответа RPC: {response.status_code}")
-                
-                if response.status_code == 200:
-                    data = response.json()
-                    logger.info(f"Ответ RPC: {data}")
-                    
-                    if "result" in data and data["result"] != "0x":
-                        # Получаем баланс в hex, конвертируем в int
-                        balance_hex = data["result"]
-                        balance_wei = int(balance_hex, 16)
-                        logger.info(f"Баланс в hex: {balance_hex}")
-                        logger.info(f"Баланс в wei: {balance_wei}")
+                for rpc_url in rpc_endpoints:
+                    try:
+                        # ERC20 balanceOf function signature: balanceOf(address)
+                        # Функция selector: 0x70a08231
+                        # Адрес пользователя должен быть дополнен до 32 байт (64 hex символа)
+                        user_padded = user_address[2:].lower().zfill(64)  # Убираем 0x и дополняем нулями
+                        data = f"0x70a08231{user_padded}"
                         
-                        # Конвертируем в USDC (6 decimal places)
-                        balance_usdc = balance_wei / (10 ** 6)
-                        logger.info(f"Получен реальный баланс USDC: ${balance_usdc:.6f}")
-                        return balance_usdc
-                    else:
-                        logger.warning("RPC вернул пустой результат для баланса USDC")
-                else:
-                    logger.warning(f"RPC запрос неудачен со статусом: {response.status_code}")
+                        logger.info(f"Запрос баланса USDC для адреса: {user_address}")
+                        logger.info(f"Запрос к RPC: {rpc_url}")
+                        logger.info(f"Контракт USDC: {usdc_contract}")
+                        logger.info(f"Данные запроса: {data}")
+                        
+                        payload = {
+                            "jsonrpc": "2.0",
+                            "method": "eth_call",
+                            "params": [{
+                                "to": usdc_contract,
+                                "data": data
+                            }, "latest"],
+                            "id": 1
+                        }
+                        
+                        response = requests.post(rpc_url, json=payload, timeout=10)
+                        logger.info(f"Статус ответа RPC: {response.status_code}")
+                        
+                        if response.status_code == 200:
+                            data = response.json()
+                            logger.info(f"Ответ RPC: {data}")
+                            
+                            if "result" in data and data["result"] != "0x" and data["result"] != "0x0000000000000000000000000000000000000000000000000000000000000000":
+                                # Получаем баланс в hex, конвертируем в int
+                                balance_hex = data["result"]
+                                balance_wei = int(balance_hex, 16)
+                                logger.info(f"Баланс в hex: {balance_hex}")
+                                logger.info(f"Баланс в wei: {balance_wei}")
+                                
+                                # Конвертируем в USDC (6 decimal places)
+                                balance_usdc = balance_wei / (10 ** 6)
+                                logger.info(f"✅ Получен реальный баланс USDC: ${balance_usdc:.6f} через {rpc_url}")
+                                return balance_usdc
+                            else:
+                                logger.warning(f"RPC {rpc_url} вернул пустой результат для баланса USDC")
+                        else:
+                            logger.warning(f"RPC {rpc_url} запрос неудачен со статусом: {response.status_code}")
+                    except Exception as e:
+                        logger.warning(f"Ошибка с RPC {rpc_url}: {e}")
+                        continue
+                        
+                logger.warning("Все RPC endpoints показывают нулевой баланс USDC")
                     
             except Exception as e:
                 logger.error(f"Ошибка получения баланса через Polygon RPC: {e}")
