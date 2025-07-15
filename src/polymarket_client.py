@@ -210,8 +210,12 @@ class PolymarketClient:
             stats['min_balance'] = min(stats['min_balance'], current_balance)
             stats['last_check'] = datetime.now()
             
-            # Каждые 10 проверок отправляем сводку (примерно каждые 5 минут при частоте 30с)
-            if stats['check_count'] % 10 == 0:
+            # Рассчитываем нужное количество проверок для интервала сводки
+            summary_interval_seconds = self.config.trading.BALANCE_SUMMARY_INTERVAL_MINUTES * 60
+            checks_per_summary = max(1, summary_interval_seconds // frequency_seconds)
+            
+            # Каждые N проверок отправляем сводку (настраивается через BALANCE_SUMMARY_INTERVAL_MINUTES)
+            if stats['check_count'] % checks_per_summary == 0:
                 from src.telegram_bot import telegram_notifier
                 
                 total_change = current_balance - stats['initial_balance']
@@ -227,7 +231,7 @@ class PolymarketClient:
                     f"🔄 <b>Проверок:</b> {stats['check_count']}\n\n"
                     f"⏰ <i>{datetime.now().strftime('%H:%M:%S')} UTC</i>"
                 )
-                logger.info(f"Отправлена сводка баланса (проверка #{stats['check_count']})")
+                logger.info(f"Отправлена сводка баланса (проверка #{stats['check_count']}, интервал {self.config.trading.BALANCE_SUMMARY_INTERVAL_MINUTES} мин)")
             
             logger.debug(f"Проверка баланса #{stats['check_count']}: ${current_balance:.2f}")
             

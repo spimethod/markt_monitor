@@ -71,6 +71,9 @@ class TradingConfig(BaseSettings):
     BALANCE_CHECK_FREQUENCY_SECONDS: int = Field(
         default=30, description="Частота проверки задачи баланса в секундах"
     )
+    BALANCE_SUMMARY_INTERVAL_MINUTES: int = Field(
+        default=5, description="Интервал отправки сводок баланса в минутах"
+    )
     
     # Дневные лимиты сделок
     MAX_DAILY_TRADES_CONSERVATIVE: int = Field(
