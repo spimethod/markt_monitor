@@ -53,7 +53,9 @@ class PolymarketClient:
             logger.warning("PRIVATE_KEY не установлен. Торговля будет недоступна.")
 
         if self.config.polymarket.USE_WEBSOCKET:
-            self._start_websocket_listener()
+            # Временно отключаем WebSocket в production для стабильности
+            logger.info("WebSocket отключен для стабильности работы в production")
+            # self._start_websocket_listener()
 
     def get_address(self) -> Optional[str]:
         """Возвращает адрес аккаунта, если он доступен."""
@@ -77,9 +79,38 @@ class PolymarketClient:
 
     def get_markets(self) -> list:
         """Получает список активных рынков"""
-        url = "https://clob.polymarket.com/markets"
-        response = self._make_request("GET", url)
-        return response.json() if response else []
+        try:
+            url = "https://clob.polymarket.com/markets"
+            response = self._make_request("GET", url)
+            
+            if not response:
+                logger.warning("Не удалось получить ответ от API рынков")
+                return []
+            
+            data = response.json()
+            
+            # Проверяем, что получили именно список
+            if isinstance(data, list):
+                logger.debug(f"Получено {len(data)} рынков из API")
+                return data
+            elif isinstance(data, dict):
+                # Если API вернул объект с рынками внутри
+                if 'data' in data and isinstance(data['data'], list):
+                    logger.debug(f"Получено {len(data['data'])} рынков из API (в поле data)")
+                    return data['data']
+                elif 'markets' in data and isinstance(data['markets'], list):
+                    logger.debug(f"Получено {len(data['markets'])} рынков из API (в поле markets)")
+                    return data['markets']
+                else:
+                    logger.warning(f"API вернул объект без массива рынков: {list(data.keys())}")
+                    return []
+            else:
+                logger.warning(f"API вернул неожиданный тип данных: {type(data)} - {str(data)[:100]}")
+                return []
+                
+        except Exception as e:
+            logger.error(f"Ошибка получения рынков: {e}")
+            return []
 
     def get_current_price(self, token_id: str) -> Optional[float]:
         """Получение текущей цены токена"""

@@ -139,10 +139,25 @@ class TradingEngine:
         while self.is_running:
             try:
                 markets = self.client.get_markets()
+                
+                # Проверяем, что получили список
+                if not isinstance(markets, list):
+                    logger.warning(f"get_markets() вернул не список: {type(markets)}")
+                    await asyncio.sleep(60)
+                    continue
+                
+                logger.debug(f"Обрабатываем {len(markets)} рынков")
+                
                 for market in markets:
+                    # Проверяем, что market - это словарь
+                    if not isinstance(market, dict):
+                        logger.warning(f"Рынок не является словарем: {type(market)} - {str(market)[:100]}")
+                        continue
+                        
                     should_trade, reason = self.market_filter.should_trade_market(market)
                     if should_trade:
                         await self._attempt_trade(market)
+                        
                 await asyncio.sleep(60)
             except Exception as e:
                 logger.error(f"Ошибка мониторинга рынков: {e}")
