@@ -394,6 +394,31 @@ class PolymarketClient:
                 continue
                 
             try:
+                # Получаем список рынков для подписки на их asset_ids
+                markets = self.get_markets()
+                if not markets or len(markets) == 0:
+                    logger.warning("Нет доступных рынков для WebSocket подписки, используется HTTP polling")
+                    await self._http_polling_fallback()
+                    await asyncio.sleep(60)
+                    continue
+                
+                # Извлекаем asset_ids из первых 10 рынков (чтобы не перегружать)
+                asset_ids = []
+                for market in markets[:10]:
+                    outcomes = market.get('outcomes', [])
+                    for outcome in outcomes:
+                        asset_id = outcome.get('asset_id')
+                        if asset_id:
+                            asset_ids.append(asset_id)
+                
+                if not asset_ids:
+                    logger.warning("Не найдены asset_ids для подписки, используется HTTP polling")
+                    await self._http_polling_fallback()
+                    await asyncio.sleep(60)
+                    continue
+                
+                logger.info(f"Подписка на {len(asset_ids)} asset_ids через WebSocket")
+                
                 # Современный подход с async for для автоматического переподключения
                 async for websocket in websockets.connect(
                     url,
@@ -409,27 +434,43 @@ class PolymarketClient:
                         connection_attempts = 0  # Сбрасываем счетчик при успешном подключении
                         
                         logger.info("WebSocket подключен успешно, подписка на рынки...")
-                        await websocket.send(json.dumps({"type": "market"}))
+                        
+                        # Правильная подписка согласно документации Polymarket
+                        subscription_message = {
+                            "assets_ids": asset_ids,
+                            "type": "market"
+                        }
+                        await websocket.send(json.dumps(subscription_message))
+                        logger.info(f"Отправлена подписка на {len(asset_ids)} assets")
                         
                         # Уведомляем о восстановлении WebSocket соединения только при повторном подключении
                         if connection_attempts > 0:
                             from src.telegram_bot import telegram_notifier
                             await telegram_notifier.send_message(
                                 "🔌 <b>WebSocket восстановлен</b>\n\n"
-                                "✅ Реальное время: активировано\n"
+                                f"✅ Подписка на {len(asset_ids)} рынков\n"
                                 "⚡ Скорость реакции: <1 секунды\n\n"
                                 "⏰ <i>{}</i>".format(datetime.now().strftime('%H:%M:%S'))
                             )
                         
+                        # Создаем задачу для периодических PING сообщений
+                        ping_task = asyncio.create_task(self._websocket_ping_task(websocket))
+                        
                         # Основной цикл получения сообщений
                         async for message in websocket:
                             try:
-                                await self.message_handler(json.loads(message))
+                                data = json.loads(message)
+                                # Фильтруем только сообщения о новых рынках или изменениях цен
+                                if data.get('event_type') in ['book', 'price_change', 'last_trade_price']:
+                                    await self.message_handler(data)
                             except json.JSONDecodeError:
                                 logger.warning(f"Не удалось декодировать WebSocket сообщение: {message[:100]}")
                             except Exception as e:
                                 logger.error(f"Ошибка обработки WebSocket сообщения: {e}")
-                                
+                        
+                        # Отменяем ping задачу при выходе из цикла
+                        ping_task.cancel()
+                        
                     except websockets.exceptions.ConnectionClosed as e:
                         self.is_connected = False
                         logger.warning(f"WebSocket соединение закрыто: {e}")
@@ -484,6 +525,17 @@ class PolymarketClient:
             
         except Exception as e:
             logger.error(f"Ошибка HTTP polling fallback: {e}")
+
+    async def _websocket_ping_task(self, websocket):
+        """Задача для отправки периодических PING сообщений"""
+        try:
+            while self.is_running and not websocket.closed:
+                await asyncio.sleep(10)  # PING каждые 10 секунд согласно документации
+                if not websocket.closed:
+                    await websocket.send("PING")
+                    logger.debug("Отправлен WebSocket PING")
+        except Exception as e:
+            logger.warning(f"Ошибка в PING задаче: {e}")
 
     def stop_websocket(self):
         """Останавливает WebSocket соединение."""
