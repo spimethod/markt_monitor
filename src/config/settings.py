@@ -124,6 +124,10 @@ class PolymarketConfig(BaseSettings):
         description="WebSocket хост",
     )
     USE_WEBSOCKET: bool = Field(default=True, description="Использовать WebSocket для обновлений")
+    WEBSOCKET_PING_INTERVAL: int = Field(default=20, description="Интервал ping для WebSocket в секундах")
+    WEBSOCKET_PING_TIMEOUT: int = Field(default=10, description="Таймаут ping для WebSocket в секундах")
+    WEBSOCKET_MAX_ATTEMPTS: int = Field(default=10, description="Максимальное количество попыток переподключения WebSocket")
+    WEBSOCKET_FALLBACK_ENABLED: bool = Field(default=True, description="Включить HTTP polling fallback при отказе WebSocket")
     CHAIN_ID: int = Field(default=137, description="Polygon Chain ID")
 
 
