@@ -15,4 +15,8 @@ cryptography>=41.0.0
 
 # База данных
 SQLAlchemy>=2.0.0
-aiosqlite>=0.19.0 
+aiosqlite>=0.19.0
+
+# PostgreSQL драйверы
+asyncpg>=0.29.0
+psycopg2-binary>=2.9.0 
