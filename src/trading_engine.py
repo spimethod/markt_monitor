@@ -26,11 +26,55 @@ class MarketFilter:
     def check_liquidity_requirement(self, market_data: Dict) -> bool:
         return float(market_data.get("liquidity", 0)) >= config.trading.MIN_LIQUIDITY_USD
 
+    def check_time_window(self, market_data: Dict) -> Tuple[bool, str]:
+        """Проверяет, что рынок создан не позднее TIME_WINDOW_MINUTES назад"""
+        created_at = market_data.get("created_at")
+        if not created_at:
+            # Если время создания неизвестно, пропускаем проверку
+            logger.debug("Время создания рынка неизвестно, пропускаем проверку временного окна")
+            return True, "Время создания неизвестно"
+        
+        try:
+            # Парсим время создания (поддерживаем разные форматы)
+            if isinstance(created_at, str):
+                # Попробуем разные форматы даты
+                for date_format in ["%Y-%m-%dT%H:%M:%S.%fZ", "%Y-%m-%dT%H:%M:%SZ", "%Y-%m-%d %H:%M:%S"]:
+                    try:
+                        market_created_time = datetime.strptime(created_at, date_format)
+                        break
+                    except ValueError:
+                        continue
+                else:
+                    # Если ни один формат не подошел, используем текущее время
+                    logger.warning(f"Не удалось распарсить время создания рынка: {created_at}")
+                    return True, "Неподдерживаемый формат времени"
+            elif isinstance(created_at, (int, float)):
+                # Unix timestamp
+                market_created_time = datetime.fromtimestamp(created_at)
+            else:
+                logger.warning(f"Неподдерживаемый тип времени создания: {type(created_at)}")
+                return True, "Неподдерживаемый тип времени"
+            
+            # Проверяем временное окно
+            time_diff = datetime.utcnow() - market_created_time
+            time_window_delta = timedelta(minutes=config.trading.TIME_WINDOW_MINUTES)
+            
+            if time_diff <= time_window_delta:
+                logger.debug(f"Рынок создан {time_diff.total_seconds():.0f} сек назад, в пределах окна {config.trading.TIME_WINDOW_MINUTES} мин")
+                return True, f"Рынок в временном окне ({time_diff.total_seconds():.0f}s)"
+            else:
+                logger.debug(f"Рынок создан {time_diff.total_seconds():.0f} сек назад, вне окна {config.trading.TIME_WINDOW_MINUTES} мин")
+                return False, f"Рынок слишком старый ({time_diff.total_seconds():.0f}s > {time_window_delta.total_seconds():.0f}s)"
+                
+        except Exception as e:
+            logger.warning(f"Ошибка при проверке временного окна: {e}")
+            return True, "Ошибка проверки времени"
+
     def should_trade_market(self, market_data: Dict) -> Tuple[bool, str]:
         market_id = market_data.get("id")
         if not market_id:
             return False, "Отсутствует ID рынка"
-            
+
         if market_id in self.processed_markets:
             return False, "Рынок уже обработан"
 
@@ -39,7 +83,12 @@ class MarketFilter:
 
         if not self.check_liquidity_requirement(market_data):
             return False, "Недостаточная ликвидность"
-            
+
+        # Проверяем временное окно
+        time_check_result, time_reason = self.check_time_window(market_data)
+        if not time_check_result:
+            return False, time_reason
+
         self.processed_markets.add(market_id)
         return True, "Рынок подходит для торговли"
 
@@ -63,14 +112,17 @@ class TradingEngine:
         logger.info("Запуск торгового движка...")
         self.is_running = True
         telegram_notifier.set_trading_engine(self)
-        
+
         tasks = [
             asyncio.create_task(self._market_monitor_task()),
         ]
         # Запускаем мониторинг позиций только если торговля включена
         if self.is_trading_enabled:
             tasks.append(asyncio.create_task(self._position_monitor_task()))
-        
+            # Добавляем задачи мониторинга баланса
+            tasks.append(asyncio.create_task(self._balance_monitor_task()))
+            tasks.append(asyncio.create_task(self._balance_check_task()))
+
         # Запускаем бота после настройки задач
         await telegram_notifier.start_bot()
 
@@ -98,16 +150,32 @@ class TradingEngine:
 
     async def _attempt_trade(self, market_data: Dict):
         if not self.is_trading_enabled: return
-        
+
         token_id = self._get_target_token_id(market_data)
         if not token_id: return
 
         price = self.client.get_current_price(token_id)
         if not price: return
+
+        # Проверяем максимальную цену для позиции NO
+        if config.trading.POSITION_SIDE == "NO" and price > config.trading.MAX_NO_PRICE:
+            logger.info(f"Пропускаем рынок: цена NO {price:.4f} превышает максимум {config.trading.MAX_NO_PRICE}")
+            return
+
+        # Рассчитываем размер позиции с учетом лимита от баланса
+        balance = self.client.get_account_balance()
+        if not balance:
+            logger.warning("Не удалось получить баланс аккаунта, пропускаем сделку")
+            return
             
-        # Упрощенная логика для примера
+        max_position_from_balance = balance * (config.trading.MAX_POSITION_PERCENT_OF_BALANCE / 100)
+        position_size_usd = min(config.trading.POSITION_SIZE_USD, max_position_from_balance)
+        
+        if position_size_usd < config.trading.POSITION_SIZE_USD:
+            logger.info(f"Размер позиции ограничен балансом: ${position_size_usd:.2f} вместо ${config.trading.POSITION_SIZE_USD}")
+
         side = "BUY"
-        size = config.trading.POSITION_SIZE_USD / price
+        size = position_size_usd / price
 
         order_result = self.client.place_order(token_id, side, size, price)
         if order_result:
@@ -133,6 +201,26 @@ class TradingEngine:
                 logger.error(f"Ошибка мониторинга позиций: {e}")
                 await asyncio.sleep(60)
 
+    async def _balance_monitor_task(self):
+        logger.info("Запуск мониторинга баланса...")
+        while self.is_running:
+            try:
+                await self.client.monitor_balance()
+                await asyncio.sleep(config.trading.BALANCE_MONITOR_INTERVAL_SECONDS)
+            except Exception as e:
+                logger.error(f"Ошибка мониторинга баланса: {e}")
+                await asyncio.sleep(60)
+
+    async def _balance_check_task(self):
+        logger.info("Запуск проверки баланса...")
+        while self.is_running:
+            try:
+                await self.client.check_balance(config.trading.BALANCE_CHECK_FREQUENCY_SECONDS)
+                await asyncio.sleep(config.trading.BALANCE_CHECK_FREQUENCY_SECONDS)
+            except Exception as e:
+                logger.error(f"Ошибка проверки баланса: {e}")
+                await asyncio.sleep(60)
+
     async def get_stats(self) -> Dict:
         open_positions_count = 0
         user_address = self.client.get_address()
@@ -143,12 +231,12 @@ class TradingEngine:
             open_positions_count = len(user_open_positions)
 
         return {**self.stats, "open_positions": open_positions_count}
-        
+
     def enable_trading(self):
         if not self.client.get_address():
             logger.error("Невозможно включить торговлю: PRIVATE_KEY не установлен.")
             return
         self.is_trading_enabled = True
-    
+
     def disable_trading(self):
         self.is_trading_enabled = False

@@ -6,6 +6,7 @@ import binascii
 import json
 import threading
 from typing import Dict, Optional, Any
+from datetime import datetime
 
 import requests
 import websockets
@@ -85,6 +86,122 @@ class PolymarketClient:
         # Эта функция требует реальной реализации
         logger.warning("Функция get_current_price не реализована и возвращает моковое значение.")
         return 0.5
+
+    def get_account_balance(self) -> Optional[float]:
+        """Получение баланса USDC аккаунта"""
+        if not self.account:
+            logger.warning("Невозможно получить баланс: аккаунт не инициализирован.")
+            return None
+        
+        # Заглушка для баланса - в реальности здесь будет API запрос
+        # В продакшн версии здесь должен быть запрос к Polymarket API
+        mock_balance = 100.0  # $100 для тестирования
+        logger.debug(f"Получен баланс аккаунта: ${mock_balance}")
+        return mock_balance
+
+    async def monitor_balance(self):
+        """Мониторинг баланса с уведомлениями о критических изменениях"""
+        if not self.account:
+            return
+        
+        try:
+            current_balance = self.get_account_balance()
+            if current_balance is None:
+                logger.warning("Не удалось получить баланс для мониторинга")
+                return
+            
+            # Сохраняем предыдущий баланс для сравнения
+            if not hasattr(self, '_previous_balance'):
+                self._previous_balance = current_balance
+                logger.info(f"Инициализация мониторинга баланса: ${current_balance:.2f}")
+                return
+            
+            # Проверяем значительные изменения баланса (больше 5%)
+            balance_change = current_balance - self._previous_balance
+            change_percent = abs(balance_change) / self._previous_balance * 100 if self._previous_balance > 0 else 0
+            
+            if change_percent >= 5.0:  # Изменение более чем на 5%
+                from src.telegram_bot import telegram_notifier
+                
+                change_emoji = "📈" if balance_change > 0 else "📉"
+                await telegram_notifier.send_message(
+                    f"{change_emoji} <b>Значительное изменение баланса</b>\n\n"
+                    f"💰 <b>Было:</b> ${self._previous_balance:.2f}\n"
+                    f"💰 <b>Стало:</b> ${current_balance:.2f}\n"
+                    f"📊 <b>Изменение:</b> {balance_change:+.2f} ({change_percent:+.1f}%)\n\n"
+                    f"⏰ <i>{datetime.now().strftime('%H:%M:%S')} UTC</i>"
+                )
+                logger.info(f"Отправлено уведомление об изменении баланса: {balance_change:+.2f} ({change_percent:+.1f}%)")
+            
+            # Проверяем критически низкий баланс (меньше $5)
+            if current_balance < 5.0:
+                from src.telegram_bot import telegram_notifier
+                await telegram_notifier.send_message(
+                    f"🚨 <b>Критически низкий баланс!</b>\n\n"
+                    f"💰 <b>Баланс:</b> ${current_balance:.2f}\n"
+                    f"⚠️ <b>Рекомендация:</b> Пополните баланс для продолжения торговли\n\n"
+                    f"⏰ <i>{datetime.now().strftime('%H:%M:%S')} UTC</i>"
+                )
+                logger.warning(f"Критически низкий баланс: ${current_balance:.2f}")
+            
+            self._previous_balance = current_balance
+            logger.debug(f"Мониторинг баланса: ${current_balance:.2f}")
+            
+        except Exception as e:
+            logger.error(f"Ошибка мониторинга баланса: {e}")
+
+    async def check_balance(self, frequency_seconds: int):
+        """Периодическая проверка баланса с расширенной аналитикой"""
+        if not self.account:
+            return
+        
+        try:
+            current_balance = self.get_account_balance()
+            if current_balance is None:
+                return
+            
+            # Инициализируем статистику баланса при первом запуске
+            if not hasattr(self, '_balance_stats'):
+                self._balance_stats = {
+                    'initial_balance': current_balance,
+                    'max_balance': current_balance,
+                    'min_balance': current_balance,
+                    'check_count': 0,
+                    'last_check': datetime.now()
+                }
+                logger.info(f"Инициализация статистики баланса: ${current_balance:.2f}")
+                return
+            
+            # Обновляем статистику
+            stats = self._balance_stats
+            stats['check_count'] += 1
+            stats['max_balance'] = max(stats['max_balance'], current_balance)
+            stats['min_balance'] = min(stats['min_balance'], current_balance)
+            stats['last_check'] = datetime.now()
+            
+            # Каждые 10 проверок отправляем сводку (примерно каждые 5 минут при частоте 30с)
+            if stats['check_count'] % 10 == 0:
+                from src.telegram_bot import telegram_notifier
+                
+                total_change = current_balance - stats['initial_balance']
+                total_change_percent = (total_change / stats['initial_balance'] * 100) if stats['initial_balance'] > 0 else 0
+                
+                await telegram_notifier.send_message(
+                    f"📊 <b>Сводка баланса</b>\n\n"
+                    f"💰 <b>Текущий:</b> ${current_balance:.2f}\n"
+                    f"🎯 <b>Начальный:</b> ${stats['initial_balance']:.2f}\n"
+                    f"📈 <b>Максимум:</b> ${stats['max_balance']:.2f}\n"
+                    f"📉 <b>Минимум:</b> ${stats['min_balance']:.2f}\n"
+                    f"📊 <b>Общее изменение:</b> {total_change:+.2f} ({total_change_percent:+.1f}%)\n"
+                    f"🔄 <b>Проверок:</b> {stats['check_count']}\n\n"
+                    f"⏰ <i>{datetime.now().strftime('%H:%M:%S')} UTC</i>"
+                )
+                logger.info(f"Отправлена сводка баланса (проверка #{stats['check_count']})")
+            
+            logger.debug(f"Проверка баланса #{stats['check_count']}: ${current_balance:.2f}")
+            
+        except Exception as e:
+            logger.error(f"Ошибка проверки баланса: {e}")
 
     def _make_request(self, method, url, **kwargs) -> Optional[requests.Response]:
         """Отправляет HTTP запрос"""
