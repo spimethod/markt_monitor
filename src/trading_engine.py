@@ -15,7 +15,7 @@ from src.telegram_bot import telegram_notifier
 
 
 class MarketFilter:
-    """Фильтр рынков по заданным критериям"""
+    """Фильтр рынков"""
     def __init__(self):
         self.strategy_params = config.get_strategy_params()
         self.processed_markets: Set[str] = set()
