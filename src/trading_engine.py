@@ -178,9 +178,6 @@ class TradingEngine:
         # Запускаем мониторинг позиций только если торговля включена
         if self.is_trading_enabled:
             tasks.append(asyncio.create_task(self._position_monitor_task()))
-            # Добавляем задачи мониторинга баланса
-            tasks.append(asyncio.create_task(self._balance_monitor_task()))
-            tasks.append(asyncio.create_task(self._balance_check_task()))
 
         # Запускаем бота после настройки задач
         await telegram_notifier.start_bot()
@@ -245,27 +242,13 @@ class TradingEngine:
                         
                         logger.info(f"   ✅ Причина: {reason}")
                         
-                        # Проверяем баланс перед торговлей
-                        current_balance = self.client.get_account_balance()
-                        logger.info(f"   💳 Текущий баланс: ${current_balance:.6f}")
-                        
                         if not self.is_trading_enabled:
                             logger.warning(f"   ⚠️  Торговля отключена (нет приватного ключа)")
                             await telegram_notifier.send_new_market_notification(market)
                             continue
                             
-                        if current_balance and current_balance >= 0.01:  # Минимум 1 цент
-                            logger.info(f"   🚀 Попытка торговли...")
-                            await self._attempt_trade(market)
-                        else:
-                            logger.warning(f"   💸 Недостаточно средств для торговли (баланс: ${current_balance:.6f})")
-                            await telegram_notifier.send_message(
-                                f"💡 <b>Найден подходящий рынок</b>\n\n"
-                                f"📋 {market_question[:200]}\n"
-                                f"💰 Ликвидность: ${market.get('liquidity', 0):.2f}\n\n"
-                                f"⚠️ <b>Торговля пропущена</b>\n"
-                                f"💸 Недостаточно средств (${current_balance:.6f})"
-                            )
+                        logger.info(f"   🚀 Попытка торговли...")
+                        await self._attempt_trade(market)
                         
                         new_markets_found += 1
                     else:
@@ -303,14 +286,8 @@ class TradingEngine:
             logger.info(f"Пропускаем рынок: цена NO {price:.4f} превышает максимум {config.trading.MAX_NO_PRICE}")
             return
 
-        # Рассчитываем размер позиции с учетом лимита от баланса
-        balance = self.client.get_account_balance()
-        if not balance:
-            logger.warning("Не удалось получить баланс аккаунта, пропускаем сделку")
-            return
-            
-        max_position_from_balance = balance * (config.trading.MAX_POSITION_PERCENT_OF_BALANCE / 100)
-        position_size_usd = min(config.trading.POSITION_SIZE_USD, max_position_from_balance)
+        # Используем фиксированный размер позиции
+        position_size_usd = config.trading.POSITION_SIZE_USD
         
         if position_size_usd < config.trading.POSITION_SIZE_USD:
             logger.info(f"Размер позиции ограничен балансом: ${position_size_usd:.2f} вместо ${config.trading.POSITION_SIZE_USD}")
@@ -329,6 +306,20 @@ class TradingEngine:
             if market_id:
                 self.market_filter.markets_with_positions.add(market_id)
                 logger.info(f"📌 Рынок {market_id} добавлен в список с активными позициями")
+        else:
+            logger.warning(f"❌ Не удалось открыть позицию. Возможно недостаточно баланса - пополните аккаунт.")
+            
+            # Отправляем уведомление о неудачной попытке торговли
+            from src.telegram_bot import telegram_notifier
+            market_question = market_data.get("question", "Неизвестный рынок")[:200]
+            await telegram_notifier.send_message(
+                f"💡 <b>Найден подходящий рынок</b>\n\n"
+                f"📋 {market_question}\n"
+                f"💰 Размер позиции: ${position_size_usd:.2f}\n"
+                f"📊 Цена {config.trading.POSITION_SIDE}: {price:.4f}\n\n"
+                f"❌ <b>Не удалось открыть позицию</b>\n"
+                f"💸 Возможно недостаточно баланса - пополните аккаунт"
+            )
 
     def _get_target_token_id(self, market_data: Dict) -> Optional[str]:
         for token in market_data.get("tokens", []):
@@ -382,25 +373,7 @@ class TradingEngine:
         except Exception as e:
             logger.error(f"Ошибка очистки рынков без позиций: {e}")
 
-    async def _balance_monitor_task(self):
-        logger.info("Запуск мониторинга баланса...")
-        while self.is_running:
-            try:
-                await self.client.monitor_balance()
-                await asyncio.sleep(config.trading.BALANCE_MONITOR_INTERVAL_SECONDS)
-            except Exception as e:
-                logger.error(f"Ошибка мониторинга баланса: {e}")
-                await asyncio.sleep(60)
 
-    async def _balance_check_task(self):
-        logger.info("Запуск проверки баланса...")
-        while self.is_running:
-            try:
-                await self.client.check_balance(config.trading.BALANCE_CHECK_FREQUENCY_SECONDS)
-                await asyncio.sleep(config.trading.BALANCE_CHECK_FREQUENCY_SECONDS)
-            except Exception as e:
-                logger.error(f"Ошибка проверки баланса: {e}")
-                await asyncio.sleep(60)
 
     async def get_stats(self) -> Dict:
         open_positions_count = 0

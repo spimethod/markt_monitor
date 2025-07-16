@@ -65,15 +65,6 @@ class TradingConfig(BaseSettings):
     POSITION_MONITOR_INTERVAL_SECONDS: int = Field(
         default=10, description="Интервал проверки позиций в секундах"
     )
-    BALANCE_MONITOR_INTERVAL_SECONDS: int = Field(
-        default=60, description="Интервал проверки баланса в секундах"
-    )
-    BALANCE_CHECK_FREQUENCY_SECONDS: int = Field(
-        default=30, description="Частота проверки задачи баланса в секундах"
-    )
-    BALANCE_SUMMARY_INTERVAL_MINUTES: int = Field(
-        default=5, description="Интервал отправки сводок баланса в минутах"
-    )
     
     # Дневные лимиты сделок
     MAX_DAILY_TRADES_CONSERVATIVE: int = Field(
@@ -112,22 +103,7 @@ class PolymarketConfig(BaseSettings):
         default=0, description="Тип подписи: 0=EOA, 1=Email/Magic, 2=Browser"
     )
 
-    # Веб-скрапинг баланса (БЕЗОПАСНЫЕ CREDENTIALS)
-    POLYMARKET_EMAIL: Optional[str] = Field(
-        default=None, description="Email для входа в веб-интерфейс (только в переменных окружения!)"
-    )
-    POLYMARKET_PASSWORD: Optional[str] = Field(
-        default=None, description="Пароль для входа в веб-интерфейс (только в переменных окружения!)"
-    )
-    WEB_BALANCE_ENABLED: bool = Field(
-        default=False, description="Включить получение баланса через веб-интерфейс"
-    )
-    WEB_BALANCE_INTERVAL_SECONDS: int = Field(
-        default=30, description="Интервал обновления баланса через веб (30 сек для безопасности)"
-    )
-    WEB_SESSION_LIFETIME_HOURS: int = Field(
-        default=2, description="Время жизни веб-сессии в часах"
-    )
+
 
     # API эндпоинты
     CLOB_HOST: str = Field(

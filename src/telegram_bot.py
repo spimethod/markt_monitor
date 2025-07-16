@@ -43,7 +43,7 @@ class TelegramNotifier:
             # Регистрируем обработчики команд
             self.app.add_handler(CommandHandler("start", self._cmd_start))
             self.app.add_handler(CommandHandler("status", self._cmd_status))
-            self.app.add_handler(CommandHandler("balance", self._cmd_balance))
+
             self.app.add_handler(CommandHandler("positions", self._cmd_positions))
             self.app.add_handler(CommandHandler("stop", self._cmd_stop_trading))
             self.app.add_handler(
@@ -241,128 +241,9 @@ class TelegramNotifier:
             "open_positions": 0,
         }
 
-    def _get_current_balance(self) -> Optional[float]:
-        """Получение текущего баланса"""
-        try:
-            if self.trading_engine and hasattr(self.trading_engine, "client"):
-                balance = self.trading_engine.client.get_account_balance()
-                logger.debug(f"Получен баланс: ${balance}")
-                return balance
-            else:
-                logger.warning("Trading engine или client не доступен для получения баланса")
-        except Exception as e:
-            logger.error(f"Ошибка получения баланса: {e}")
-        return None
 
-    def _get_balance_with_source(self) -> Dict[str, str]:
-        """Получение баланса с информацией об источнике (веб-скрапинг или API)"""
-        try:
-            # Проверяем включен ли веб-скрапинг
-            web_enabled = config.polymarket.WEB_BALANCE_ENABLED
-            web_credentials_set = (
-                config.polymarket.POLYMARKET_EMAIL and 
-                config.polymarket.POLYMARKET_PASSWORD
-            )
-            
-            if web_enabled and web_credentials_set:
-                web_status_text = "🌐 <b>Веб-скрапинг:</b> Включен ✅"
-                balance = self._get_current_balance() or 0
-                balance_text = f"💰 <b>Баланс (веб-интерфейс):</b> ${balance:.2f}"
-                
-            elif web_enabled and not web_credentials_set:
-                web_status_text = "🌐 <b>Веб-скрапинг:</b> Не настроен (нет credentials)"
-                balance = self._get_current_balance() or 0
-                balance_text = f"💰 <b>Баланс (API fallback):</b> ${balance:.2f}"
-                
-            else:
-                web_status_text = "🌐 <b>Веб-скрапинг:</b> Отключен"
-                balance = self._get_current_balance() or 0
-                balance_text = f"💰 <b>Баланс (API):</b> ${balance:.2f}"
-            
-            return {
-                "text": balance_text,
-                "web_status": web_status_text
-            }
-            
-        except Exception as e:
-            logger.error(f"Ошибка получения баланса с источником: {e}")
-            return {
-                "text": "💰 <b>Баланс:</b> Ошибка получения",
-                "web_status": "🌐 <b>Веб-скрапинг:</b> Ошибка"
-            }
 
-    def _get_detailed_balance(self) -> Dict[str, Any]:
-        """Получение детального баланса через Polymarket Data API"""
-        try:
-            if not self.trading_engine or not hasattr(self.trading_engine, "client"):
-                logger.warning("Trading engine не доступен для получения детального баланса")
-                return {"free_usdc": None, "positions_value": None, "total": None}
-            
-            client = self.trading_engine.client
-            if not client.account:
-                logger.warning("Account не инициализирован для получения детального баланса")
-                return {"free_usdc": None, "positions_value": None, "total": None}
-            
-            # Получаем адреса для проверки
-            addresses_to_check = []
-            if client.config.polymarket.POLYMARKET_PROXY_ADDRESS:
-                addresses_to_check.append(client.config.polymarket.POLYMARKET_PROXY_ADDRESS)
-            main_address = client.get_address()
-            if main_address:
-                addresses_to_check.append(main_address)
-            
-            if not addresses_to_check:
-                logger.warning("Нет адресов для проверки детального баланса")
-                return {"free_usdc": None, "positions_value": None, "total": None}
-            
-            logger.debug(f"Проверяем детальный баланс для {len(addresses_to_check)} адресов")
-            
-            # Пробуем для каждого адреса
-            for user_address in addresses_to_check:
-                try:
-                    # Получаем стоимость позиций
-                    positions_value = client._get_positions_value(user_address)
-                    
-                    # Получаем свободный USDC
-                    proxy_wallet, free_usdc = client._get_free_usdc_balance(user_address)
-                    
-                    # Проверяем прямой баланс USDC
-                    direct_usdc = client._check_usdc_balance_for_address(user_address)
-                    
-                    if positions_value is not None or free_usdc is not None or direct_usdc is not None:
-                        total = 0.0
-                        final_free_usdc = 0.0
-                        final_positions_value = positions_value or 0.0
-                        
-                        # Используем наибольшее значение USDC
-                        if free_usdc and free_usdc > 0:
-                            final_free_usdc = free_usdc
-                        elif direct_usdc and direct_usdc > 0:
-                            final_free_usdc = direct_usdc
-                        
-                        total = final_positions_value + final_free_usdc
-                        
-                        result = {
-                            "free_usdc": final_free_usdc,
-                            "positions_value": final_positions_value,
-                            "total": total if total > 0 else None,
-                            "proxy_wallet": proxy_wallet,
-                            "checked_address": user_address
-                        }
-                        
-                        logger.debug(f"Детальный баланс получен: {result}")
-                        return result
-                        
-                except Exception as addr_e:
-                    logger.warning(f"Ошибка проверки адреса {user_address}: {addr_e}")
-                    continue
-            
-            logger.info("Детальный баланс не найден ни на одном адресе")
-            return {"free_usdc": None, "positions_value": None, "total": None}
-            
-        except Exception as e:
-            logger.error(f"Критическая ошибка получения детального баланса: {e}")
-            return {"free_usdc": None, "positions_value": None, "total": None}
+
 
     def _get_open_positions(self) -> List[Dict]:
         """Получение открытых позиций"""
@@ -432,10 +313,8 @@ class TelegramNotifier:
 
         stats = await self._get_current_stats()
 
-        # Получаем баланс с информацией об источнике
-        balance_info = self._get_balance_with_source()
-        balance_text = balance_info["text"]
-        web_status_text = balance_info["web_status"]
+        # Баланс недоступен (удален по требованию)
+        balance_text = "💰 <b>Баланс:</b> Недоступен"
 
         # Получаем статус базы данных
         db_status_text = ""
@@ -443,8 +322,8 @@ class TelegramNotifier:
             db_status = self.trading_engine.client.db_manager.get_database_status()
             db_emoji = "🗄️" if db_status["engine_type"] == "PostgreSQL" else "📁" if db_status["engine_type"] == "SQLite" else "❌"
             db_status_text = f"\n{db_emoji} <b>База данных:</b> {db_status['engine_type']}"
-            if db_status.get("using_sqlite_fallback"):
-                db_status_text += " (fallback)"
+                    if db_status.get("using_sqlite_fallback"):
+            db_status_text += " (fallback)"
 
         text = f"""
 📊 <b>Статус бота</b>
@@ -452,7 +331,6 @@ class TelegramNotifier:
 🤖 <b>Состояние:</b> {self.bot_status}
 🔄 <b>Торговля:</b> {'Включена' if stats.get('is_trading_enabled', False) else 'Отключена'}
 📈 <b>Открытых позиций:</b> {stats.get('open_positions', 0)}{db_status_text}
-{web_status_text}
 {balance_text}
 
 📋 <b>Сегодня:</b>
@@ -473,34 +351,7 @@ class TelegramNotifier:
             text, parse_mode=ParseMode.HTML, reply_markup=reply_markup
         )
 
-    async def _cmd_balance(
-        self, update: Update, context: ContextTypes.DEFAULT_TYPE
-    ):  # pylint: disable=unused-argument
-        """Команда /balance"""
-        if not update.message:
-            return
 
-        balance = self._get_current_balance()
-        stats = await self._get_current_stats()
-        open_positions = self._get_open_positions()
-
-        # Рассчитываем средства в позициях
-        in_positions = sum(p.get("size", 0) * p.get("price", 0) for p in open_positions)
-
-        text = f"""
-💰 <b>Баланс аккаунта</b>
-
-💵 <b>USDC:</b> ${balance or 0:.2f}
-📊 <b>В позициях:</b> ${in_positions:.2f}
-💸 <b>Доступно:</b> ${(balance or 0) - in_positions:.2f}
-
-📈 <b>P&L сегодня:</b> ${stats.get('total_profit', 0):.2f}
-📊 <b>Всего сделок:</b> {stats.get('total_trades', 0)}
-
-⏰ <i>Последнее обновление: {datetime.utcnow().strftime('%H:%M:%S')} UTC</i>
-        """
-
-        await update.message.reply_text(text, parse_mode=ParseMode.HTML)
 
     async def _cmd_positions(
         self, update: Update, context: ContextTypes.DEFAULT_TYPE
@@ -810,29 +661,7 @@ class TelegramNotifier:
             except Exception as edit_e:
                 logger.error(f"Не удалось отправить сообщение об ошибке статуса: {edit_e}")
 
-    async def _handle_balance_callback(self, query: CallbackQuery):
-        """Обработка callback для баланса"""
-        balance = self._get_current_balance()
-        stats = await self._get_current_stats()
-        open_positions = self._get_open_positions()
 
-        # Рассчитываем средства в позициях
-        in_positions = sum(p.get("size", 0) * p.get("price", 0) for p in open_positions)
-
-        text = f"""
-💰 <b>Баланс аккаунта</b>
-
-💵 <b>USDC:</b> ${balance or 0:.2f}
-📊 <b>В позициях:</b> ${in_positions:.2f}
-💸 <b>Доступно:</b> ${(balance or 0) - in_positions:.2f}
-
-📈 <b>P&L сегодня:</b> ${stats.get('total_profit', 0):.2f}
-📊 <b>Всего сделок:</b> {stats.get('total_trades', 0)}
-
-⏰ <i>Последнее обновление: {datetime.utcnow().strftime('%H:%M:%S')} UTC</i>
-        """
-
-        await query.edit_message_text(text, parse_mode=ParseMode.HTML)
 
     async def _handle_positions_callback(self, query: CallbackQuery):
         """Обработка callback для позиций"""
