@@ -1,38 +1,39 @@
-"""
-Telegram бот для уведомлений и управления торговым ботом
-Поддерживает команды управления и отправку уведомлений о торговых операциях
-"""
+"""Telegram bot module."""
 
+import asyncio
+import logging
 from datetime import datetime
-from typing import Dict, List, Optional, Union, Any
-from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, CallbackQuery
+from typing import Any, Dict, List, Optional, Union
+
+from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
+from telegram.constants import ParseMode
 from telegram.ext import (
     Application,
-    CommandHandler,
     CallbackQueryHandler,
+    CommandHandler,
     ContextTypes,
 )
-from telegram.constants import ParseMode
-from loguru import logger
+from telegram import CallbackQuery
 
 from src.config.settings import config
 
+logger = logging.getLogger(__name__)
+
 
 class TelegramNotifier:
-    """Класс для отправки уведомлений в Telegram"""
+    """Класс для уведомлений в Telegram"""
 
     def __init__(self, bot_token: str, chat_id: str):
         self.bot_token = bot_token
         self.chat_id = chat_id
-        self.app = None
-        self.bot_status = "stopped"
+        self.app: Optional[Application] = None
+        self.bot_status = "initialized"
+        self.trading_engine: Optional[Any] = None
         self.trading_enabled = True
-        self.trading_engine = None  # Ссылка на торговый движок
-
         self._initialize_bot()
 
-    def set_trading_engine(self, trading_engine):
-        """Установка ссылки на торговый движок"""
+    def set_trading_engine(self, trading_engine: Any):
+        """Установка торгового движка для доступа к статусу"""
         self.trading_engine = trading_engine
 
     def _initialize_bot(self):
@@ -43,12 +44,9 @@ class TelegramNotifier:
             # Регистрируем обработчики команд
             self.app.add_handler(CommandHandler("start", self._cmd_start))
             self.app.add_handler(CommandHandler("status", self._cmd_status))
-
             self.app.add_handler(CommandHandler("positions", self._cmd_positions))
             self.app.add_handler(CommandHandler("stop", self._cmd_stop_trading))
-            self.app.add_handler(
-                CommandHandler("start_trading", self._cmd_start_trading)
-            )
+            self.app.add_handler(CommandHandler("start_trading", self._cmd_start_trading))
             self.app.add_handler(CommandHandler("config", self._cmd_config))
             self.app.add_handler(CommandHandler("logs", self._cmd_logs))
             self.app.add_handler(CommandHandler("help", self._cmd_help))
@@ -75,7 +73,7 @@ class TelegramNotifier:
                 self.bot_status = "running"
                 logger.info("Telegram бот запущен")
 
-        except Exception as e:  # pylint: disable=broad-exception-caught
+        except Exception as e:
             logger.error(f"Ошибка запуска Telegram бота: {e}")
             raise
 
@@ -84,29 +82,27 @@ class TelegramNotifier:
         try:
             if self.app:
                 await self.app.stop()
-                await self.app.shutdown()
 
             self.bot_status = "stopped"
             logger.info("Telegram бот остановлен")
-
         except Exception as e:
             logger.error(f"Ошибка остановки Telegram бота: {e}")
 
-    async def send_message(
-        self, text: str, parse_mode: str = ParseMode.HTML, reply_markup=None
-    ):
+    async def send_message(self, text: str, reply_markup: Optional[InlineKeyboardMarkup] = None):
         """Отправка сообщения в Telegram"""
         try:
-            if self.app and self.app.bot:
+            if self.app:
                 await self.app.bot.send_message(
                     chat_id=self.chat_id,
                     text=text,
-                    parse_mode=parse_mode,
+                    parse_mode=ParseMode.HTML,
                     reply_markup=reply_markup,
-                    disable_web_page_preview=True,
                 )
-        except Exception as e:  # pylint: disable=broad-exception-caught
+            logger.debug(f"Сообщение отправлено в Telegram: {text[:50]}...")
+        except Exception as e:
             logger.error(f"Ошибка отправки сообщения в Telegram: {e}")
+
+    # ===== УВЕДОМЛЕНИЯ =====
 
     async def send_startup_notification(self):
         """Уведомление о запуске бота"""
@@ -198,51 +194,76 @@ class TelegramNotifier:
 
         await self.send_message(text, reply_markup=reply_markup)
 
-    async def send_error_notification(self, error_data: Dict):
+    async def send_error_notification(self, error_msg: str):
         """Уведомление об ошибке"""
         if not config.telegram.NOTIFY_ERRORS:
             return
 
         text = f"""
-🚨 <b>Ошибка</b>
+❌ <b>Ошибка в боте</b>
 
-📝 <b>Описание:</b> {error_data.get('message', 'N/A')}
-🔧 <b>Компонент:</b> {error_data.get('component', 'N/A')}
-⚠️ <b>Уровень:</b> {error_data.get('level', 'ERROR')}
+📝 <b>Описание:</b> {error_msg}
+
+⏰ <i>{datetime.utcnow().strftime('%H:%M:%S')} UTC</i>
+        """
+
+        keyboard = [
+            [InlineKeyboardButton("📊 Статус", callback_data="status")],
+            [InlineKeyboardButton("📋 Логи", callback_data="logs")],
+        ]
+        reply_markup = InlineKeyboardMarkup(keyboard)
+
+        await self.send_message(text, reply_markup=reply_markup)
+
+    async def send_websocket_fallback_notification(self):
+        """Уведомление о переходе на HTTP polling"""
+        text = f"""
+⚠️ <b>WebSocket недоступен</b>
+
+🔄 Переключение на HTTP polling
+📊 Задержка: до 60 секунд
+🔧 Попытка восстановления каждые 30 сек
 
 ⏰ <i>{datetime.utcnow().strftime('%H:%M:%S')} UTC</i>
         """
 
         await self.send_message(text)
 
+    async def send_search_summary(self, total_markets: int, suitable_markets: int, new_markets: int):
+        """Сводка поиска рынков"""
+        text = f"""
+🔍 <b>Поиск завершен</b>
+
+📊 Проанализировано: {total_markets} рынков
+✅ Подходящих: {suitable_markets}
+🆕 Новых: {new_markets}
+
+⏰ <i>{datetime.utcnow().strftime('%H:%M:%S')} UTC</i>
+        """
+
+        await self.send_message(text)
+
+    # ===== ВСПОМОГАТЕЛЬНЫЕ МЕТОДЫ =====
+
     async def _get_current_stats(self) -> Dict:
-        """Получение текущей статистики от торгового движка"""
-        try:
-            if self.trading_engine:
-                stats = await self.trading_engine.get_stats()
-                # Добавляем информацию о статусе торговли
-                stats["is_running"] = self.trading_engine.is_running
-                stats["is_trading_enabled"] = self.trading_engine.is_trading_enabled
-                return stats
-            else:
-                logger.warning("Trading engine не установлен в telegram боте")
-        except Exception as e:
-            logger.error(f"Ошибка получения статистики от торгового движка: {e}")
-            
-        # Возвращаем пустую статистику если не удалось получить данные
+        """Получение текущей статистики"""
+        if self.trading_engine:
+            return {
+                "is_trading_enabled": self.trading_engine.is_trading_enabled,
+                "total_trades": self.trading_engine.stats.get("total_trades", 0),
+                "successful_trades": self.trading_engine.stats.get("successful_trades", 0),
+                "total_profit": self.trading_engine.stats.get("total_profit", 0.0),
+                "open_positions": len(self._get_open_positions()),
+                "daily_trades": self.trading_engine.stats.get("daily_trades", 0),
+            }
         return {
+            "is_trading_enabled": False,
             "total_trades": 0,
             "successful_trades": 0,
             "total_profit": 0.0,
-            "daily_trades": 0,
-            "is_running": False,
-            "is_trading_enabled": False,
             "open_positions": 0,
+            "daily_trades": 0,
         }
-
-
-
-
 
     def _get_open_positions(self) -> List[Dict]:
         """Получение открытых позиций"""
@@ -260,17 +281,15 @@ class TelegramNotifier:
             return timestamp.strftime("%Y-%m-%d %H:%M")
         if isinstance(timestamp, str):
             try:
-                # Попытка парсинга строки в datetime
                 dt = datetime.fromisoformat(timestamp.replace("Z", "+00:00"))
                 return dt.strftime("%Y-%m-%d %H:%M")
             except (ValueError, AttributeError):
                 return timestamp[:16] if len(timestamp) > 16 else timestamp
         return "N/A"
 
-    # Обработчики команд
-    async def _cmd_start(
-        self, update: Update, context: ContextTypes.DEFAULT_TYPE
-    ):  # pylint: disable=unused-argument
+    # ===== ОБРАБОТЧИКИ КОМАНД =====
+
+    async def _cmd_start(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Команда /start"""
         if not update.message:
             return
@@ -302,9 +321,7 @@ class TelegramNotifier:
             text, parse_mode=ParseMode.HTML, reply_markup=reply_markup
         )
 
-    async def _cmd_status(
-        self, update: Update, context: ContextTypes.DEFAULT_TYPE
-    ):  # pylint: disable=unused-argument
+    async def _cmd_status(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Команда /status"""
         if not update.message:
             return
@@ -349,11 +366,7 @@ class TelegramNotifier:
             text, parse_mode=ParseMode.HTML, reply_markup=reply_markup
         )
 
-
-
-    async def _cmd_positions(
-        self, update: Update, context: ContextTypes.DEFAULT_TYPE
-    ):  # pylint: disable=unused-argument
+    async def _cmd_positions(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Команда /positions"""
         if not update.message:
             return
@@ -361,45 +374,48 @@ class TelegramNotifier:
         open_positions = self._get_open_positions()
 
         if not open_positions:
-            text = f"""
-📋 <b>Открытые позиции</b>
+            text = f"📋 <b>Открытых позиций нет</b>\n\n⏰ <i>Проверено: {datetime.utcnow().strftime('%H:%M:%S')}</i>"
+            keyboard = [
+                [InlineKeyboardButton("🔄 Обновить", callback_data="positions")],
+                [InlineKeyboardButton("📊 Статус", callback_data="status")],
+            ]
+            reply_markup = InlineKeyboardMarkup(keyboard)
 
-🔍 <i>Нет открытых позиций</i>
+            await update.message.reply_text(
+                text, parse_mode=ParseMode.HTML, reply_markup=reply_markup
+            )
+            return
 
-⏰ <i>Последнее обновление: {datetime.utcnow().strftime('%H:%M:%S')} UTC</i>
+        text = f"📋 <b>Открытые позиции</b> ({len(open_positions)})\n\n"
+
+        for pos in open_positions:
+            created_at = self._format_timestamp(pos.get("created_at"))
+            pnl = pos.get("pnl", 0.0)
+            pnl_emoji = "📈" if pnl > 0 else "📉" if pnl < 0 else "📊"
+
+            text += f"""
+🏷️ <b>ID:</b> <code>{pos.get('id', 'N/A')[:10]}...</code>
+💱 <b>Токен:</b> <code>{pos.get('token_id', 'N/A')[:10]}...</code>
+📊 <b>Размер:</b> {pos.get('size', 0):.2f}
+💰 <b>Цена входа:</b> ${pos.get('entry_price', 0):.4f}
+{pnl_emoji} <b>PnL:</b> ${pnl:.2f} ({(pnl / (pos.get('size', 1) * pos.get('entry_price', 1)) * 100):.1f}%)
+🕒 <b>Открыта:</b> {created_at}
             """
-        else:
-            text = "📋 <b>Открытые позиции</b>\n\n"
+            text += "\n" + "-" * 20 + "\n"
 
-            for i, position in enumerate(
-                open_positions[:5], 1
-            ):  # Показываем максимум 5 позиций
-                timestamp = position.get("timestamp")
-                time_str = self._format_timestamp(timestamp)
+        text += f"\n⏰ <i>{datetime.utcnow().strftime('%H:%M:%S')} UTC</i>"
 
-                text += f"""
-<b>{i}.</b> {position.get('side', 'N/A')} {position.get('size', 0):.2f}
-💰 Цена: ${position.get('price', 0):.4f}
-⏰ Время: {time_str}
-🏷️ ID: <code>{position.get('order_id', 'N/A')[:8]}...</code>
-
-"""
-
-            if len(open_positions) > 5:
-                text += f"<i>... и еще {len(open_positions) - 5} позиций</i>\n\n"
-
-            text += f"⏰ <i>Последнее обновление: {datetime.utcnow().strftime('%H:%M:%S')} UTC</i>"
-
-        keyboard = [[InlineKeyboardButton("🔄 Обновить", callback_data="positions")]]
+        keyboard = [
+            [InlineKeyboardButton("🔄 Обновить", callback_data="positions")],
+            [InlineKeyboardButton("📊 Статус", callback_data="status")],
+        ]
         reply_markup = InlineKeyboardMarkup(keyboard)
 
         await update.message.reply_text(
             text, parse_mode=ParseMode.HTML, reply_markup=reply_markup
         )
 
-    async def _cmd_stop_trading(
-        self, update: Update, context: ContextTypes.DEFAULT_TYPE
-    ):  # pylint: disable=unused-argument
+    async def _cmd_stop_trading(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Команда /stop"""
         if not update.message:
             return
@@ -420,11 +436,7 @@ class TelegramNotifier:
         """
 
         keyboard = [
-            [
-                InlineKeyboardButton(
-                    "▶️ Запустить торговлю", callback_data="start_trading"
-                )
-            ]
+            [InlineKeyboardButton("▶️ Запустить торговлю", callback_data="start_trading")]
         ]
         reply_markup = InlineKeyboardMarkup(keyboard)
 
@@ -432,9 +444,7 @@ class TelegramNotifier:
             text, parse_mode=ParseMode.HTML, reply_markup=reply_markup
         )
 
-    async def _cmd_start_trading(
-        self, update: Update, context: ContextTypes.DEFAULT_TYPE
-    ):  # pylint: disable=unused-argument
+    async def _cmd_start_trading(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Команда /start_trading"""
         if not update.message:
             return
@@ -492,9 +502,7 @@ class TelegramNotifier:
 
         await update.message.reply_text(text, parse_mode=ParseMode.HTML)
 
-    async def _cmd_logs(
-        self, update: Update, context: ContextTypes.DEFAULT_TYPE
-    ):  # pylint: disable=unused-argument
+    async def _cmd_logs(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Команда /logs"""
         if not update.message:
             return
@@ -502,118 +510,74 @@ class TelegramNotifier:
         text = """
 📝 <b>Последние логи</b>
 
-<code>
-[INFO] Bot started successfully
-[INFO] WebSocket connected
-[INFO] Market monitor active
-[INFO] No new markets found
-</code>
-
-💡 <i>Полные логи доступны в файле logs/bot.log</i>
+💬 <i>Функция логов в разработке. Пожалуйста, проверьте файл logs/bot.log вручную.</i>
         """
 
         await update.message.reply_text(text, parse_mode=ParseMode.HTML)
 
-    async def _cmd_help(
-        self, update: Update, context: ContextTypes.DEFAULT_TYPE
-    ):  # pylint: disable=unused-argument
+    async def _cmd_help(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Команда /help"""
         if not update.message:
             return
 
         text = """
-🆘 <b>Справка по командам</b>
+📚 <b>Справка по командам</b>
 
-📊 <b>Мониторинг:</b>
-/status - Статус бота и статистика
+/start - Запуск бота
+/status - Статус бота
 /positions - Открытые позиции
-/logs - Последние логи
-
-🔧 <b>Управление:</b>
 /stop - Остановить торговлю
 /start_trading - Запустить торговлю
-/config - Просмотр конфигурации
-
-ℹ️ <b>Информация:</b>
+/config - Конфигурация
+/logs - Последние логи
 /help - Эта справка
-/start - Приветствие
 
-🤖 <b>Автоматические уведомления:</b>
-• Новые рынки
-• Размещение ордеров
-• Закрытие позиций с прибылью
-• Ошибки и предупреждения
-
-💡 <i>Используйте inline кнопки для быстрого доступа к функциям</i>
+💡 <i>Все команды доступны через меню или inline-кнопки</i>
         """
 
         await update.message.reply_text(text, parse_mode=ParseMode.HTML)
 
-    async def _handle_callback(
-        self, update: Update, context: ContextTypes.DEFAULT_TYPE
-    ):
-        """Обработчик inline кнопок"""
-        try:
-            query = update.callback_query
-            if not query:
-                logger.warning("Callback query пустой")
-                return
+    # ===== ОБРАБОТЧИКИ CALLBACK =====
 
-            await query.answer()
+    async def _handle_callback(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Обработка callback queries от inline кнопок"""
+        query = update.callback_query
+        if not query:
+            return
 
-            data = query.data
-            if not data:
-                logger.warning("Callback data пустая")
-                return
+        await query.answer()
 
-            logger.debug(f"Обрабатываем callback: {data}")
-
-            # Обрабатываем callback данные напрямую без создания временного update
-            if data == "status":
-                await self._handle_status_callback(query)
-            elif data == "positions":
-                await self._handle_positions_callback(query)
-            elif data == "config":
-                await self._handle_config_callback(query)
-            elif data == "stop":
-                await self._handle_stop_callback(query)
-            elif data == "start_trading":
-                await self._handle_start_trading_callback(query)
-            else:
-                logger.warning(f"Неизвестная callback команда: {data}")
-                
-        except Exception as e:
-            logger.error(f"Критическая ошибка в обработчике callback: {e}")
-            try:
-                if query:
-                    await query.edit_message_text(
-                        "❌ Произошла ошибка при обработке команды. Попробуйте еще раз.",
-                        parse_mode=ParseMode.HTML
-                    )
-            except Exception as edit_e:
-                logger.error(f"Не удалось отправить сообщение об ошибке: {edit_e}")
+        if query.data == "status":
+            await self._handle_status_callback(query)
+        elif query.data == "positions":
+            await self._handle_positions_callback(query)
+        elif query.data == "config":
+            await self._handle_config_callback(query)
+        elif query.data == "stop":
+            await self._handle_stop_callback(query)
+        elif query.data == "start_trading":
+            await self._handle_start_trading_callback(query)
+        elif query.data == "logs":
+            await self._handle_logs_callback(query)
 
     async def _handle_status_callback(self, query: CallbackQuery):
         """Обработка callback для статуса"""
+        stats = await self._get_current_stats()
+
+        # Получаем статус базы данных
+        db_status_text = ""
         try:
-            logger.debug("Обработка status callback")
-            stats = await self._get_current_stats()
-            logger.debug(f"Получена статистика: {stats}")
+            if self.trading_engine and hasattr(self.trading_engine, "client") and hasattr(self.trading_engine.client, "db_manager"):
+                db_status = self.trading_engine.client.db_manager.get_database_status()
+                db_emoji = "🗄️" if db_status["engine_type"] == "PostgreSQL" else "📁" if db_status["engine_type"] == "SQLite" else "❌"
+                db_status_text = f"\n{db_emoji} <b>База данных:</b> {db_status['engine_type']}"
+                if db_status.get("using_sqlite_fallback"):
+                    db_status_text += " (fallback)"
+        except Exception as db_e:
+            logger.warning(f"Ошибка получения статуса БД: {db_e}")
+            db_status_text = "\n❓ <b>База данных:</b> Недоступна"
 
-            # Получаем статус базы данных
-            db_status_text = ""
-            try:
-                if self.trading_engine and hasattr(self.trading_engine, "client") and hasattr(self.trading_engine.client, "db_manager"):
-                    db_status = self.trading_engine.client.db_manager.get_database_status()
-                    db_emoji = "🗄️" if db_status["engine_type"] == "PostgreSQL" else "📁" if db_status["engine_type"] == "SQLite" else "❌"
-                    db_status_text = f"\n{db_emoji} <b>База данных:</b> {db_status['engine_type']}"
-                    if db_status.get("using_sqlite_fallback"):
-                        db_status_text += " (fallback)"
-            except Exception as db_e:
-                logger.warning(f"Ошибка получения статуса БД: {db_e}")
-                db_status_text = "\n❓ <b>База данных:</b> Недоступна"
-
-            text = f"""
+        text = f"""
 📊 <b>Статус бота</b>
 
 🤖 <b>Состояние:</b> {self.bot_status}
@@ -626,66 +590,58 @@ class TelegramNotifier:
 • Успешных: {stats.get('successful_trades', 0)}/{stats.get('total_trades', 0)}
 
 ⏰ <i>Последнее обновление: {datetime.utcnow().strftime('%H:%M:%S')} UTC</i>
-            """
+        """
 
-            keyboard = [
-                [InlineKeyboardButton("🔄 Обновить", callback_data="status")],
-                [InlineKeyboardButton("📋 Позиции", callback_data="positions")],
-            ]
-            reply_markup = InlineKeyboardMarkup(keyboard)
+        keyboard = [
+            [InlineKeyboardButton("🔄 Обновить", callback_data="status")],
+            [InlineKeyboardButton("📋 Позиции", callback_data="positions")],
+        ]
+        reply_markup = InlineKeyboardMarkup(keyboard)
 
-            await query.edit_message_text(
-                text, parse_mode=ParseMode.HTML, reply_markup=reply_markup
-            )
-            logger.debug("Status callback успешно обработан")
-            
-        except Exception as e:
-            logger.error(f"Ошибка в _handle_status_callback: {e}")
-            try:
-                await query.edit_message_text(
-                    "❌ Ошибка получения статуса. Попробуйте команду /status",
-                    parse_mode=ParseMode.HTML
-                )
-            except Exception as edit_e:
-                logger.error(f"Не удалось отправить сообщение об ошибке статуса: {edit_e}")
-
-
+        await query.edit_message_text(
+            text, parse_mode=ParseMode.HTML, reply_markup=reply_markup
+        )
 
     async def _handle_positions_callback(self, query: CallbackQuery):
         """Обработка callback для позиций"""
         open_positions = self._get_open_positions()
 
         if not open_positions:
-            text = f"""
-📋 <b>Открытые позиции</b>
+            text = f"📋 <b>Открытых позиций нет</b>\n\n⏰ <i>Проверено: {datetime.utcnow().strftime('%H:%M:%S')}</i>"
+            keyboard = [
+                [InlineKeyboardButton("🔄 Обновить", callback_data="positions")],
+                [InlineKeyboardButton("📊 Статус", callback_data="status")],
+            ]
+            reply_markup = InlineKeyboardMarkup(keyboard)
 
-🔍 <i>Нет открытых позиций</i>
+            await query.edit_message_text(
+                text, parse_mode=ParseMode.HTML, reply_markup=reply_markup
+            )
+            return
 
-⏰ <i>Последнее обновление: {datetime.utcnow().strftime('%H:%M:%S')} UTC</i>
+        text = f"📋 <b>Открытые позиции</b> ({len(open_positions)})\n\n"
+
+        for pos in open_positions:
+            created_at = self._format_timestamp(pos.get("created_at"))
+            pnl = pos.get("pnl", 0.0)
+            pnl_emoji = "📈" if pnl > 0 else "📉" if pnl < 0 else "📊"
+
+            text += f"""
+🏷️ <b>ID:</b> <code>{pos.get('id', 'N/A')[:10]}...</code>
+💱 <b>Токен:</b> <code>{pos.get('token_id', 'N/A')[:10]}...</code>
+📊 <b>Размер:</b> {pos.get('size', 0):.2f}
+💰 <b>Цена входа:</b> ${pos.get('entry_price', 0):.4f}
+{pnl_emoji} <b>PnL:</b> ${pnl:.2f} ({(pnl / (pos.get('size', 1) * pos.get('entry_price', 1)) * 100):.1f}%)
+🕒 <b>Открыта:</b> {created_at}
             """
-        else:
-            text = "📋 <b>Открытые позиции</b>\n\n"
+            text += "\n" + "-" * 20 + "\n"
 
-            for i, position in enumerate(
-                open_positions[:5], 1
-            ):  # Показываем максимум 5 позиций
-                timestamp = position.get("timestamp")
-                time_str = self._format_timestamp(timestamp)
+        text += f"\n⏰ <i>{datetime.utcnow().strftime('%H:%M:%S')} UTC</i>"
 
-                text += f"""
-<b>{i}.</b> {position.get('side', 'N/A')} {position.get('size', 0):.2f}
-💰 Цена: ${position.get('price', 0):.4f}
-⏰ Время: {time_str}
-🏷️ ID: <code>{position.get('order_id', 'N/A')[:8]}...</code>
-
-"""
-
-            if len(open_positions) > 5:
-                text += f"<i>... и еще {len(open_positions) - 5} позиций</i>\n\n"
-
-            text += f"⏰ <i>Последнее обновление: {datetime.utcnow().strftime('%H:%M:%S')} UTC</i>"
-
-        keyboard = [[InlineKeyboardButton("🔄 Обновить", callback_data="positions")]]
+        keyboard = [
+            [InlineKeyboardButton("🔄 Обновить", callback_data="positions")],
+            [InlineKeyboardButton("📊 Статус", callback_data="status")],
+        ]
         reply_markup = InlineKeyboardMarkup(keyboard)
 
         await query.edit_message_text(
@@ -736,11 +692,7 @@ class TelegramNotifier:
         """
 
         keyboard = [
-            [
-                InlineKeyboardButton(
-                    "▶️ Запустить торговлю", callback_data="start_trading"
-                )
-            ]
+            [InlineKeyboardButton("▶️ Запустить торговлю", callback_data="start_trading")]
         ]
         reply_markup = InlineKeyboardMarkup(keyboard)
 
@@ -774,8 +726,18 @@ class TelegramNotifier:
             text, parse_mode=ParseMode.HTML, reply_markup=reply_markup
         )
 
+    async def _handle_logs_callback(self, query: CallbackQuery):
+        """Обработка callback для логов"""
+        text = """
+📝 <b>Последние логи</b>
 
-# Глобальный экземпляр уведомителя
+💬 <i>Функция логов в разработке. Пожалуйста, проверьте файл logs/bot.log вручную.</i>
+        """
+
+        await query.edit_message_text(text, parse_mode=ParseMode.HTML)
+
+
+# Глобальный экземпляр
 telegram_notifier = TelegramNotifier(
     bot_token=config.telegram.TELEGRAM_BOT_TOKEN,
     chat_id=config.telegram.TELEGRAM_CHAT_ID,

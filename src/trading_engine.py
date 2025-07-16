@@ -257,12 +257,7 @@ class TradingEngine:
                 # Сводка по циклу
                 if new_markets_found > 0:
                     logger.info(f"🎯 ИТОГ ПОИСКА: найдено {suitable_markets} подходящих рынков из {len(markets)}")
-                    await telegram_notifier.send_message(
-                        f"🔍 <b>Поиск завершен</b>\n\n"
-                        f"📊 Проанализировано: {len(markets)} рынков\n"
-                        f"✅ Подходящих: {suitable_markets}\n"
-                        f"🆕 Новых: {new_markets_found}"
-                    )
+                    await telegram_notifier.send_search_summary(len(markets), suitable_markets, new_markets_found)
                 else:
                     logger.info(f"🔍 Поиск завершен: проанализировано {len(markets)} рынков, новых подходящих не найдено")
                 

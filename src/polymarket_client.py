@@ -553,13 +553,7 @@ class PolymarketClient:
                         websocket_enabled = False
                         # Уведомляем о переходе на HTTP polling
                         from src.telegram_bot import telegram_notifier
-                        await telegram_notifier.send_message(
-                            "⚠️ <b>WebSocket недоступен</b>\n\n"
-                            "🔄 Переключение на HTTP polling\n"
-                            "📊 Задержка: до 60 секунд\n"
-                            "🔧 Попытка восстановления каждые 30 сек\n\n"
-                            "⏰ <i>{}</i>".format(datetime.now().strftime('%H:%M:%S'))
-                        )
+                        await telegram_notifier.send_websocket_fallback_notification()
                         continue
                     else:
                         logger.error("Fallback отключен, WebSocket будет пытаться переподключиться...")
