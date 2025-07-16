@@ -318,12 +318,16 @@ class TelegramNotifier:
 
         # Получаем статус базы данных
         db_status_text = ""
-        if self.trading_engine and hasattr(self.trading_engine, "client") and hasattr(self.trading_engine.client, "db_manager"):
-            db_status = self.trading_engine.client.db_manager.get_database_status()
-            db_emoji = "🗄️" if db_status["engine_type"] == "PostgreSQL" else "📁" if db_status["engine_type"] == "SQLite" else "❌"
-            db_status_text = f"\n{db_emoji} <b>База данных:</b> {db_status['engine_type']}"
-                    if db_status.get("using_sqlite_fallback"):
-            db_status_text += " (fallback)"
+        try:
+            if self.trading_engine and hasattr(self.trading_engine, "client") and hasattr(self.trading_engine.client, "db_manager"):
+                db_status = self.trading_engine.client.db_manager.get_database_status()
+                db_emoji = "🗄️" if db_status["engine_type"] == "PostgreSQL" else "📁" if db_status["engine_type"] == "SQLite" else "❌"
+                db_status_text = f"\n{db_emoji} <b>База данных:</b> {db_status['engine_type']}"
+                if db_status.get("using_sqlite_fallback"):
+                    db_status_text += " (fallback)"
+        except Exception as db_e:
+            logger.warning(f"Ошибка получения статуса БД: {db_e}")
+            db_status_text = "\n❓ <b>База данных:</b> Недоступна"
 
         text = f"""
 📊 <b>Статус бота</b>
@@ -574,8 +578,6 @@ class TelegramNotifier:
             # Обрабатываем callback данные напрямую без создания временного update
             if data == "status":
                 await self._handle_status_callback(query)
-            elif data == "balance":
-                await self._handle_balance_callback(query)
             elif data == "positions":
                 await self._handle_positions_callback(query)
             elif data == "config":
@@ -606,9 +608,7 @@ class TelegramNotifier:
             logger.debug(f"Получена статистика: {stats}")
 
             # Получаем баланс с информацией об источнике
-            balance_info = self._get_balance_with_source()
-            balance_text = balance_info["text"]
-            web_status_text = balance_info["web_status"]
+            balance_text = "💰 <b>Баланс:</b> Недоступен"
 
             # Получаем статус базы данных
             db_status_text = ""
@@ -629,7 +629,6 @@ class TelegramNotifier:
 🤖 <b>Состояние:</b> {self.bot_status}
 🔄 <b>Торговля:</b> {'Включена' if stats.get('is_trading_enabled', False) else 'Отключена'}
 📈 <b>Открытых позиций:</b> {stats.get('open_positions', 0)}{db_status_text}
-{web_status_text}
 {balance_text}
 
 📋 <b>Сегодня:</b>
