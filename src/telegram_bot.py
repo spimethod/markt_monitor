@@ -254,6 +254,43 @@ class TelegramNotifier:
             logger.error(f"Ошибка получения баланса: {e}")
         return None
 
+    def _get_balance_with_source(self) -> Dict[str, str]:
+        """Получение баланса с информацией об источнике (веб-скрапинг или API)"""
+        try:
+            # Проверяем включен ли веб-скрапинг
+            web_enabled = config.polymarket.WEB_BALANCE_ENABLED
+            web_credentials_set = (
+                config.polymarket.POLYMARKET_EMAIL and 
+                config.polymarket.POLYMARKET_PASSWORD
+            )
+            
+            if web_enabled and web_credentials_set:
+                web_status_text = "🌐 <b>Веб-скрапинг:</b> Включен ✅"
+                balance = self._get_current_balance() or 0
+                balance_text = f"💰 <b>Баланс (веб-интерфейс):</b> ${balance:.2f}"
+                
+            elif web_enabled and not web_credentials_set:
+                web_status_text = "🌐 <b>Веб-скрапинг:</b> Не настроен (нет credentials)"
+                balance = self._get_current_balance() or 0
+                balance_text = f"💰 <b>Баланс (API fallback):</b> ${balance:.2f}"
+                
+            else:
+                web_status_text = "🌐 <b>Веб-скрапинг:</b> Отключен"
+                balance = self._get_current_balance() or 0
+                balance_text = f"💰 <b>Баланс (API):</b> ${balance:.2f}"
+            
+            return {
+                "text": balance_text,
+                "web_status": web_status_text
+            }
+            
+        except Exception as e:
+            logger.error(f"Ошибка получения баланса с источником: {e}")
+            return {
+                "text": "💰 <b>Баланс:</b> Ошибка получения",
+                "web_status": "🌐 <b>Веб-скрапинг:</b> Ошибка"
+            }
+
     def _get_detailed_balance(self) -> Dict[str, Any]:
         """Получение детального баланса через Polymarket Data API"""
         try:
@@ -395,20 +432,10 @@ class TelegramNotifier:
 
         stats = await self._get_current_stats()
 
-        # Получаем детальный баланс
-        detailed_balance = self._get_detailed_balance()
-        balance_text = ""
-        
-        if detailed_balance["total"] is not None:
-            balance_text = f"""💰 <b>Баланс (через Polymarket API):</b>
-• Свободный USDC: ${detailed_balance['free_usdc']:.2f}
-• Стоимость позиций: ${detailed_balance['positions_value']:.2f}
-• Общий баланс: ${detailed_balance['total']:.2f}"""
-            if detailed_balance.get("proxy_wallet"):
-                balance_text += f"\n• Proxy Wallet: {detailed_balance['proxy_wallet'][:10]}..."
-        else:
-            fallback_balance = self._get_current_balance() or 0
-            balance_text = f"💰 <b>Баланс (fallback):</b> ${fallback_balance:.2f}"
+        # Получаем баланс с информацией об источнике
+        balance_info = self._get_balance_with_source()
+        balance_text = balance_info["text"]
+        web_status_text = balance_info["web_status"]
 
         # Получаем статус базы данных
         db_status_text = ""
@@ -425,6 +452,7 @@ class TelegramNotifier:
 🤖 <b>Состояние:</b> {self.bot_status}
 🔄 <b>Торговля:</b> {'Включена' if stats.get('is_trading_enabled', False) else 'Отключена'}
 📈 <b>Открытых позиций:</b> {stats.get('open_positions', 0)}{db_status_text}
+{web_status_text}
 {balance_text}
 
 📋 <b>Сегодня:</b>
@@ -726,21 +754,10 @@ class TelegramNotifier:
             stats = await self._get_current_stats()
             logger.debug(f"Получена статистика: {stats}")
 
-            # Получаем детальный баланс
-            detailed_balance = self._get_detailed_balance()
-            logger.debug(f"Получен детальный баланс: {detailed_balance}")
-            balance_text = ""
-            
-            if detailed_balance["total"] is not None:
-                balance_text = f"""💰 <b>Баланс (через Polymarket API):</b>
-• Свободный USDC: ${detailed_balance['free_usdc']:.2f}
-• Стоимость позиций: ${detailed_balance['positions_value']:.2f}
-• Общий баланс: ${detailed_balance['total']:.2f}"""
-                if detailed_balance.get("proxy_wallet"):
-                    balance_text += f"\n• Proxy Wallet: {detailed_balance['proxy_wallet'][:10]}..."
-            else:
-                fallback_balance = self._get_current_balance() or 0
-                balance_text = f"💰 <b>Баланс (fallback):</b> ${fallback_balance:.2f}"
+            # Получаем баланс с информацией об источнике
+            balance_info = self._get_balance_with_source()
+            balance_text = balance_info["text"]
+            web_status_text = balance_info["web_status"]
 
             # Получаем статус базы данных
             db_status_text = ""
@@ -761,6 +778,7 @@ class TelegramNotifier:
 🤖 <b>Состояние:</b> {self.bot_status}
 🔄 <b>Торговля:</b> {'Включена' if stats.get('is_trading_enabled', False) else 'Отключена'}
 📈 <b>Открытых позиций:</b> {stats.get('open_positions', 0)}{db_status_text}
+{web_status_text}
 {balance_text}
 
 📋 <b>Сегодня:</b>

@@ -112,6 +112,23 @@ class PolymarketConfig(BaseSettings):
         default=0, description="Тип подписи: 0=EOA, 1=Email/Magic, 2=Browser"
     )
 
+    # Веб-скрапинг баланса (БЕЗОПАСНЫЕ CREDENTIALS)
+    POLYMARKET_EMAIL: Optional[str] = Field(
+        default=None, description="Email для входа в веб-интерфейс (только в переменных окружения!)"
+    )
+    POLYMARKET_PASSWORD: Optional[str] = Field(
+        default=None, description="Пароль для входа в веб-интерфейс (только в переменных окружения!)"
+    )
+    WEB_BALANCE_ENABLED: bool = Field(
+        default=False, description="Включить получение баланса через веб-интерфейс"
+    )
+    WEB_BALANCE_INTERVAL_SECONDS: int = Field(
+        default=30, description="Интервал обновления баланса через веб (30 сек для безопасности)"
+    )
+    WEB_SESSION_LIFETIME_HOURS: int = Field(
+        default=2, description="Время жизни веб-сессии в часах"
+    )
+
     # API эндпоинты
     CLOB_HOST: str = Field(
         default="https://clob.polymarket.com", description="CLOB API хост"

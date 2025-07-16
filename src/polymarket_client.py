@@ -6,6 +6,7 @@ import binascii
 import json
 import threading
 import random
+import time
 from typing import Dict, Optional, Any, Tuple
 from datetime import datetime
 
@@ -239,9 +240,19 @@ class PolymarketClient:
 
     def get_account_balance(self) -> float:
         """
-        Получение баланса аккаунта через Polymarket Data API с fallback на RPC
+        Получение баланса аккаунта через веб-интерфейс (приоритет) или API
         """
         try:
+            # Приоритет 1: Веб-скрапинг (если включен)
+            if self.config.polymarket.WEB_BALANCE_ENABLED:
+                web_balance = self._get_balance_from_web()
+                if web_balance is not None:
+                    logger.info(f"✅ Баланс получен через веб-интерфейс: ${web_balance:.2f}")
+                    return web_balance
+                else:
+                    logger.warning("⚠️ Веб-скрапинг не работает, переход на API")
+            
+            # Приоритет 2: Polymarket Data API
             logger.info("💰 Получение баланса через Polymarket Data API")
             
             # Список адресов для проверки
@@ -301,6 +312,57 @@ class PolymarketClient:
         except Exception as e:
             logger.error(f"Ошибка получения баланса: {e}")
             return 0.0
+
+    def _get_balance_from_web(self) -> Optional[float]:
+        """Получает баланс через веб-скрапер"""
+        try:
+            from src.web_balance_scraper import web_scraper
+            
+            # Используем asyncio.run для вызова async метода
+            import asyncio
+            try:
+                # Пробуем использовать существующий event loop
+                loop = asyncio.get_event_loop()
+                if loop.is_running():
+                    # Если loop уже работает, создаем задачу
+                    future = asyncio.ensure_future(web_scraper.get_balance_from_web())
+                    # Ждем с таймаутом
+                    balance_data = None
+                    for i in range(50):  # 5 секунд максимум
+                        if future.done():
+                            balance_data = future.result()
+                            break
+                        time.sleep(0.1)
+                    
+                    if not future.done():
+                        future.cancel()
+                        logger.warning("Таймаут веб-скрапинга баланса")
+                        return None
+                else:
+                    # Loop не работает, используем run
+                    balance_data = asyncio.run(web_scraper.get_balance_from_web())
+            except RuntimeError:
+                # Создаем новый event loop
+                balance_data = asyncio.run(web_scraper.get_balance_from_web())
+            
+            if balance_data and isinstance(balance_data, dict):
+                balance = balance_data.get('balance')
+                profit_loss = balance_data.get('profit_loss', 0)
+                source = balance_data.get('source', 'web')
+                
+                logger.info(f"💰 Веб-баланс: ${balance:.2f}, P&L: {profit_loss:+.2f} (источник: {source})")
+                
+                # Сохраняем P&L для статистики
+                if not hasattr(self, '_last_web_pnl'):
+                    self._last_web_pnl = profit_loss
+                
+                return balance
+                
+            return None
+            
+        except Exception as e:
+            logger.error(f"Ошибка веб-скрапинга баланса: {e}")
+            return None
 
     def _get_positions_value(self, user_address: str) -> Optional[float]:
         """Получение общей USD стоимости всех позиций через Polymarket Data API"""

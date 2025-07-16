@@ -12,6 +12,21 @@ TELEGRAM_BOT_TOKEN=ваш_токен_бота
 TELEGRAM_CHAT_ID=ваш_chat_id
 ```
 
+## 🌐 ВЕБ-СКРАПИНГ БАЛАНСА (НОВАЯ ФУНКЦИЯ!)
+
+⚠️ **ВАЖНО: Credentials НЕ хранятся в коде - только в переменных окружения Railway!**
+
+```bash
+# Включение веб-скрапинга для точного баланса
+WEB_BALANCE_ENABLED=true
+POLYMARKET_EMAIL=ваш_email@polymarket.com
+POLYMARKET_PASSWORD=ваш_пароль
+
+# Настройки веб-скрапинга (опционально)
+WEB_BALANCE_INTERVAL_SECONDS=30
+WEB_SESSION_LIFETIME_HOURS=2
+```
+
 ## 💾 БАЗА ДАННЫХ (PostgreSQL с автоматическим fallback)
 
 ```bash
@@ -141,11 +156,21 @@ LOG_TO_FILE=true
 ## 🔥 ГОТОВАЯ СТРОКА ДЛЯ КОПИРОВАНИЯ В RAILWAY
 
 ```bash
+# Основные обязательные
 PRIVATE_KEY=ваш_приватный_ключ_с_magic_link
 POLYMARKET_PROXY_ADDRESS=0x190Cc00825739D2a20DA3036a8D854193429C84E
 SIGNATURE_TYPE=1
 TELEGRAM_BOT_TOKEN=ваш_токен_бота
 TELEGRAM_CHAT_ID=ваш_chat_id
+
+# Веб-скрапинг баланса (НОВОЕ!)
+WEB_BALANCE_ENABLED=true
+POLYMARKET_EMAIL=ваш_email@polymarket.com
+POLYMARKET_PASSWORD=ваш_пароль
+WEB_BALANCE_INTERVAL_SECONDS=30
+WEB_SESSION_LIFETIME_HOURS=2
+
+# Торговые параметры
 POSITION_SIZE_USD=1.0
 PROFIT_TARGET_PERCENT=10.0
 TRADING_STRATEGY=conservative
@@ -159,13 +184,19 @@ STOP_LOSS_PERCENT=-20.0
 MAX_POSITION_PERCENT_OF_BALANCE=10.0
 MAX_DAILY_TRADES_CONSERVATIVE=10
 MAX_DAILY_TRADES_AGGRESSIVE=25
+
+# Мониторинг
 POSITION_MONITOR_INTERVAL_SECONDS=10
 BALANCE_MONITOR_INTERVAL_SECONDS=60
 BALANCE_CHECK_FREQUENCY_SECONDS=30
+
+# Уведомления
 NOTIFY_NEW_MARKETS=true
 NOTIFY_TRADES=true
 NOTIFY_PROFITS=true
 NOTIFY_ERRORS=true
+
+# Система
 ENVIRONMENT=production
 DEBUG=false
 LOG_LEVEL=INFO
