@@ -589,13 +589,29 @@ class PolymarketClient:
     async def _websocket_ping_task(self, websocket):
         """Задача для отправки периодических PING сообщений"""
         try:
-            while self.is_running and not websocket.closed:
+            while self.is_running and self._is_websocket_open(websocket):
                 await asyncio.sleep(10)  # PING каждые 10 секунд согласно документации
-                if not websocket.closed:
+                if self._is_websocket_open(websocket):
                     await websocket.send("PING")
                     logger.debug("Отправлен WebSocket PING")
         except Exception as e:
             logger.warning(f"Ошибка в PING задаче: {e}")
+            
+    def _is_websocket_open(self, websocket):
+        """Проверяет, открыто ли WebSocket соединение"""
+        try:
+            # Проверяем наличие атрибута closed у websocket объекта
+            if hasattr(websocket, 'closed'):
+                return not websocket.closed
+            # Альтернативная проверка для других типов объектов
+            elif hasattr(websocket, 'state'):
+                from websockets.protocol import State
+                return websocket.state == State.OPEN
+            else:
+                # Если нет известных атрибутов, считаем что соединение открыто
+                return True
+        except Exception:
+            return False
 
     def stop_websocket(self):
         """Останавливает WebSocket соединение."""
