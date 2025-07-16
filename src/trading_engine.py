@@ -288,9 +288,6 @@ class TradingEngine:
 
         # Используем фиксированный размер позиции
         position_size_usd = config.trading.POSITION_SIZE_USD
-        
-        if position_size_usd < config.trading.POSITION_SIZE_USD:
-            logger.info(f"Размер позиции ограничен балансом: ${position_size_usd:.2f} вместо ${config.trading.POSITION_SIZE_USD}")
 
         side = "BUY"
         size = position_size_usd / price

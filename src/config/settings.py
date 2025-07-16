@@ -43,9 +43,6 @@ class TradingConfig(BaseSettings):
         default=24, description="Максимальное время держания позиции в часах"
     )
     STOP_LOSS_PERCENT: float = Field(default=-20.0, description="Stop-loss в %")
-    MAX_POSITION_PERCENT_OF_BALANCE: float = Field(
-        default=10.0, description="Максимальный % от баланса на позицию"
-    )
 
     # Стратегия торговли
     TRADING_STRATEGY: str = Field(

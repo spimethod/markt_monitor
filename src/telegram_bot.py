@@ -125,7 +125,6 @@ class TelegramNotifier:
 
         keyboard = [
             [InlineKeyboardButton("📊 Статус", callback_data="status")],
-            [InlineKeyboardButton("💰 Баланс", callback_data="balance")],
             [InlineKeyboardButton("📋 Позиции", callback_data="positions")],
             [InlineKeyboardButton("⚙️ Настройки", callback_data="config")],
         ]
@@ -283,20 +282,19 @@ class TelegramNotifier:
 
 📋 <b>Доступные команды:</b>
 /status - Статус бота
-/balance - Баланс аккаунта
 /positions - Открытые позиции
 /stop - Остановить торговлю
 /start_trading - Запустить торговлю
 /config - Конфигурация
 /logs - Последние логи
-/help - Справка
 
 🚀 Бот готов к работе!
         """
 
         keyboard = [
             [InlineKeyboardButton("📊 Статус", callback_data="status")],
-            [InlineKeyboardButton("💰 Баланс", callback_data="balance")],
+            [InlineKeyboardButton("📋 Позиции", callback_data="positions")],
+            [InlineKeyboardButton("⚙️ Настройки", callback_data="config")],
         ]
         reply_markup = InlineKeyboardMarkup(keyboard)
 
@@ -532,7 +530,6 @@ class TelegramNotifier:
 
 📊 <b>Мониторинг:</b>
 /status - Статус бота и статистика
-/balance - Баланс и P&L
 /positions - Открытые позиции
 /logs - Последние логи
 
