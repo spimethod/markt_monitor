@@ -311,9 +311,6 @@ class TelegramNotifier:
 
         stats = await self._get_current_stats()
 
-        # Баланс недоступен (удален по требованию)
-        balance_text = "💰 <b>Баланс:</b> Недоступен"
-
         # Получаем статус базы данных
         db_status_text = ""
         try:
@@ -333,7 +330,6 @@ class TelegramNotifier:
 🤖 <b>Состояние:</b> {self.bot_status}
 🔄 <b>Торговля:</b> {'Включена' if stats.get('is_trading_enabled', False) else 'Отключена'}
 📈 <b>Открытых позиций:</b> {stats.get('open_positions', 0)}{db_status_text}
-{balance_text}
 
 📋 <b>Сегодня:</b>
 • Сделок: {stats.get('daily_trades', 0)}
@@ -604,9 +600,6 @@ class TelegramNotifier:
             stats = await self._get_current_stats()
             logger.debug(f"Получена статистика: {stats}")
 
-            # Получаем баланс с информацией об источнике
-            balance_text = "💰 <b>Баланс:</b> Недоступен"
-
             # Получаем статус базы данных
             db_status_text = ""
             try:
@@ -626,7 +619,6 @@ class TelegramNotifier:
 🤖 <b>Состояние:</b> {self.bot_status}
 🔄 <b>Торговля:</b> {'Включена' if stats.get('is_trading_enabled', False) else 'Отключена'}
 📈 <b>Открытых позиций:</b> {stats.get('open_positions', 0)}{db_status_text}
-{balance_text}
 
 📋 <b>Сегодня:</b>
 • Сделок: {stats.get('daily_trades', 0)}
