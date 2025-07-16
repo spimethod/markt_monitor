@@ -304,19 +304,7 @@ class TradingEngine:
                 self.market_filter.markets_with_positions.add(market_id)
                 logger.info(f"📌 Рынок {market_id} добавлен в список с активными позициями")
         else:
-            logger.warning(f"❌ Не удалось открыть позицию. Возможно недостаточно баланса - пополните аккаунт.")
-            
-            # Отправляем уведомление о неудачной попытке торговли
-            from src.telegram_bot import telegram_notifier
-            market_question = market_data.get("question", "Неизвестный рынок")[:200]
-            await telegram_notifier.send_message(
-                f"💡 <b>Найден подходящий рынок</b>\n\n"
-                f"📋 {market_question}\n"
-                f"💰 Размер позиции: ${position_size_usd:.2f}\n"
-                f"📊 Цена {config.trading.POSITION_SIDE}: {price:.4f}\n\n"
-                f"❌ <b>Не удалось открыть позицию</b>\n"
-                f"💸 Возможно недостаточно баланса - пополните аккаунт"
-            )
+            logger.warning(f"❌ Не удалось открыть позицию для рынка: {market_data.get('question', 'N/A')}")
 
     def _get_target_token_id(self, market_data: Dict) -> Optional[str]:
         for token in market_data.get("tokens", []):
