@@ -27,7 +27,6 @@ MAX_NO_PRICE=0.85
 MAX_OPEN_POSITIONS=2
 MAX_POSITION_HOURS=24
 STOP_LOSS_PERCENT=-20.0
-MAX_POSITION_PERCENT_OF_BALANCE=5.0
 ```
 
 ## 📱 УВЕДОМЛЕНИЯ TELEGRAM
@@ -70,7 +69,6 @@ MAX_NO_PRICE=0.85
 MAX_OPEN_POSITIONS=2
 MAX_POSITION_HOURS=24
 STOP_LOSS_PERCENT=-20.0
-MAX_POSITION_PERCENT_OF_BALANCE=5.0
 NOTIFY_NEW_MARKETS=true
 NOTIFY_TRADES=true
 NOTIFY_PROFITS=true
@@ -91,7 +89,6 @@ REQUEST_DELAY_SECONDS=0.1
 
 - `POSITION_SIZE_USD=1.0` - по $1 на сделку
 - `MAX_OPEN_POSITIONS=2` - максимум 2 позиции
-- `MAX_POSITION_PERCENT_OF_BALANCE=5.0` - максимум 5% от баланса
 
 ### 🛡️ Защитные механизмы:
 

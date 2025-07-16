@@ -54,16 +54,13 @@ MAX_NO_PRICE=0.85
 MAX_OPEN_POSITIONS=10
 MAX_POSITION_HOURS=24
 STOP_LOSS_PERCENT=-20.0
-MAX_POSITION_PERCENT_OF_BALANCE=10.0
 
 # Дневные лимиты сделок
 MAX_DAILY_TRADES_CONSERVATIVE=10
 MAX_DAILY_TRADES_AGGRESSIVE=25
 
-# Интервалы мониторинга (ускоренные)
+# Интервалы мониторинга
 POSITION_MONITOR_INTERVAL_SECONDS=10
-BALANCE_MONITOR_INTERVAL_SECONDS=60
-BALANCE_CHECK_FREQUENCY_SECONDS=30
 ```
 
 ## 📱 УВЕДОМЛЕНИЯ И МОНИТОРИНГ
@@ -97,7 +94,7 @@ LOG_TO_FILE=true
 - `PROFIT_TARGET_PERCENT=10.0` - цель прибыли 10%
 - `STOP_LOSS_PERCENT=-20.0` - стоп-лосс 20%
 - `MAX_POSITION_HOURS=24` - максимум 24 часа держания
-- `MAX_POSITION_PERCENT_OF_BALANCE=10.0` - максимум 10% от баланса на позицию
+- `POSITION_SIZE_USD=50` - фиксированный размер позиции в долларах
 - `MAX_DAILY_TRADES_CONSERVATIVE=10` - лимит сделок для консервативной стратегии
 - `MAX_DAILY_TRADES_AGGRESSIVE=25` - лимит сделок для агрессивной стратегии
 
@@ -181,14 +178,11 @@ MAX_NO_PRICE=0.85
 MAX_OPEN_POSITIONS=10
 MAX_POSITION_HOURS=24
 STOP_LOSS_PERCENT=-20.0
-MAX_POSITION_PERCENT_OF_BALANCE=10.0
 MAX_DAILY_TRADES_CONSERVATIVE=10
 MAX_DAILY_TRADES_AGGRESSIVE=25
 
 # Мониторинг
 POSITION_MONITOR_INTERVAL_SECONDS=10
-BALANCE_MONITOR_INTERVAL_SECONDS=60
-BALANCE_CHECK_FREQUENCY_SECONDS=30
 
 # Уведомления
 NOTIFY_NEW_MARKETS=true
