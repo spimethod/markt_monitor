@@ -255,7 +255,7 @@ class PolymarketClient:
             return None
 
     async def check_and_close_positions(self):
-        """Проверяет и закрывает позиции в соответствии со стратегией"""
+        """Проверяет и закрывает позиции в соответствии с стратегией"""
         if not self.account:
             return
 
