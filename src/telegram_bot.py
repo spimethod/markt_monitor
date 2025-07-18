@@ -1,7 +1,9 @@
 """Telegram bot module."""
 
 import asyncio
+import itertools
 import logging
+import pathlib
 from datetime import datetime
 from typing import Any, Dict, List, Optional, Union
 
@@ -18,6 +20,39 @@ from telegram import CallbackQuery
 from src.config.settings import config
 
 logger = logging.getLogger(__name__)
+
+# Константы для логов
+LOG_PATH = pathlib.Path("logs/bot.log")
+TAIL_LINES = 30  # количество строк для отправки
+MAX_MESSAGE_LENGTH = 4000  # максимальная длина сообщения в Telegram
+
+
+def tail_log(path: pathlib.Path, n: int) -> str:
+    """Читает последние n строк из файла лога"""
+    try:
+        if not path.exists():
+            return "Файл логов не найден"
+        
+        with path.open("r", encoding="utf-8") as f:
+            lines = f.readlines()
+            if not lines:
+                return "Лог пуст"
+            
+            # Берем последние n строк
+            last_lines = lines[-n:] if len(lines) > n else lines
+            return "".join(last_lines)
+    except Exception as e:
+        return f"Ошибка чтения логов: {e}"
+
+
+def escape_html(text: str) -> str:
+    """Экранирует HTML символы для безопасного отображения в Telegram"""
+    return (text
+            .replace("&", "&amp;")
+            .replace("<", "&lt;")
+            .replace(">", "&gt;")
+            .replace('"', "&quot;")
+            .replace("'", "&#39;"))
 
 
 class TelegramNotifier:
@@ -287,6 +322,24 @@ class TelegramNotifier:
                 return timestamp[:16] if len(timestamp) > 16 else timestamp
         return "N/A"
 
+    def _get_logs_content(self) -> str:
+        """Получение содержимого логов"""
+        try:
+            content = tail_log(LOG_PATH, TAIL_LINES)
+            if not content or content.strip() == "":
+                return "Лог пуст или недоступен"
+            
+            # Экранируем HTML символы
+            escaped_content = escape_html(content)
+            
+            # Ограничиваем длину сообщения
+            if len(escaped_content) > MAX_MESSAGE_LENGTH:
+                escaped_content = escaped_content[-MAX_MESSAGE_LENGTH:] + "\n\n... (обрезано)"
+            
+            return escaped_content
+        except Exception as e:
+            return f"Ошибка чтения логов: {e}"
+
     # ===== ОБРАБОТЧИКИ КОМАНД =====
 
     async def _cmd_start(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -507,13 +560,22 @@ class TelegramNotifier:
         if not update.message:
             return
 
-        text = """
-📝 <b>Последние логи</b>
+        content = self._get_logs_content()
+        text = f"""
+📝 <b>Последние {TAIL_LINES} строк журнала</b>
 
-💬 <i>Функция логов в разработке. Пожалуйста, проверьте файл logs/bot.log вручную.</i>
+<code>{content}</code>
+
+⏰ <i>Обновлено: {datetime.utcnow().strftime('%H:%M:%S')} UTC</i>
         """
 
-        await update.message.reply_text(text, parse_mode=ParseMode.HTML)
+        keyboard = [
+            [InlineKeyboardButton("🔄 Обновить", callback_data="logs")],
+            [InlineKeyboardButton("📊 Статус", callback_data="status")],
+        ]
+        reply_markup = InlineKeyboardMarkup(keyboard)
+
+        await update.message.reply_text(text, parse_mode=ParseMode.HTML, reply_markup=reply_markup)
 
     async def _cmd_help(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Команда /help"""
@@ -728,13 +790,22 @@ class TelegramNotifier:
 
     async def _handle_logs_callback(self, query: CallbackQuery):
         """Обработка callback для логов"""
-        text = """
-📝 <b>Последние логи</b>
+        content = self._get_logs_content()
+        text = f"""
+📝 <b>Последние {TAIL_LINES} строк журнала</b>
 
-💬 <i>Функция логов в разработке. Пожалуйста, проверьте файл logs/bot.log вручную.</i>
+<code>{content}</code>
+
+⏰ <i>Обновлено: {datetime.utcnow().strftime('%H:%M:%S')} UTC</i>
         """
 
-        await query.edit_message_text(text, parse_mode=ParseMode.HTML)
+        keyboard = [
+            [InlineKeyboardButton("🔄 Обновить", callback_data="logs")],
+            [InlineKeyboardButton("📊 Статус", callback_data="status")],
+        ]
+        reply_markup = InlineKeyboardMarkup(keyboard)
+
+        await query.edit_message_text(text, parse_mode=ParseMode.HTML, reply_markup=reply_markup)
 
 
 # Глобальный экземпляр
