@@ -300,15 +300,15 @@ class PolymarketClient:
             start_min = (now - timedelta(minutes=max_age_minutes)).isoformat(timespec="seconds") + "Z"
             
             params = {
-                "active": True,
-                "closed": False,
+                "active": "true",
+                "closed": "false",
                 "limit": 100,
-                "start_date_min": start_min
+                "created_at_min": start_min
             }
             
             url = "https://gamma-api.polymarket.com/markets"
             logger.info(f"🔗 Запрос новых рынков через Gamma API: {url}")
-            logger.info(f"📅 Параметры: active=True, closed=False, start_date_min={start_min}")
+            logger.info(f"📅 Параметры: active=true, closed=false, created_at_min={start_min}")
             
             response = self._make_request("GET", url, params=params)
             
@@ -326,7 +326,7 @@ class PolymarketClient:
                 
                 logger.info(f"🎯 Gamma API вернул {len(markets)} новых рынков (≤{max_age_minutes} мин)")
                 
-                # Детальное логирование всех рынков
+                # Детальное логирование новых рынков
                 for i, market in enumerate(markets, 1):
                     question = market.get('question', 'Неизвестный рынок')
                     market_id = market.get('question_id') or market.get('condition_id') or market.get('market_slug')
@@ -335,9 +335,15 @@ class PolymarketClient:
                     accepting_orders = market.get('accepting_orders', False)
                     closed = market.get('closed', False)
                     
-                    logger.info(f"📋 РЫНОК #{i}: {question[:80]}...")
+                    # Вычисляем возраст для отображения
+                    current_time = datetime.utcnow()
+                    market_age = self._get_market_age(market, current_time)
+                    age_str = f"{market_age} мин" if market_age is not None else "N/A"
+                    
+                    logger.info(f"📋 НОВЫЙ РЫНОК #{i}: {question[:80]}...")
                     logger.info(f"   🆔 ID: {market_id}")
                     logger.info(f"   📅 Создан: {created_at}")
+                    logger.info(f"   ⏰ Возраст: {age_str}")
                     logger.info(f"   🎮 Активен: {active}")
                     logger.info(f"   💱 Принимает ордера: {accepting_orders}")
                     logger.info(f"   🔒 Закрыт: {closed}")
@@ -442,28 +448,39 @@ class PolymarketClient:
         try:
             # Пробуем разные поля для времени создания
             creation_time = None
+            time_field = None
             
-            # 1. Пробуем game_start_time
-            if market.get('game_start_time'):
+            # 1. Пробуем created_at (основное поле)
+            if market.get('created_at'):
+                creation_time = datetime.fromisoformat(market['created_at'].replace('Z', '+00:00'))
+                time_field = 'created_at'
+            
+            # 2. Пробуем game_start_time
+            elif market.get('game_start_time'):
                 creation_time = datetime.fromisoformat(market['game_start_time'].replace('Z', '+00:00'))
+                time_field = 'game_start_time'
             
-            # 2. Пробуем end_date_iso
+            # 3. Пробуем end_date_iso
             elif market.get('end_date_iso'):
                 creation_time = datetime.fromisoformat(market['end_date_iso'].replace('Z', '+00:00'))
+                time_field = 'end_date_iso'
             
-            # 3. Пробуем accepting_order_timestamp
+            # 4. Пробуем accepting_order_timestamp
             elif market.get('accepting_order_timestamp'):
                 creation_time = datetime.fromisoformat(market['accepting_order_timestamp'].replace('Z', '+00:00'))
+                time_field = 'accepting_order_timestamp'
             
-            # 4. Если нет времени создания, используем текущее время как fallback
+            # 5. Если нет времени создания, считаем рынок старым
             else:
-                # Для рынков без времени создания считаем их новыми
-                return 0
+                logger.debug(f"Рынок без времени создания: {market.get('question', 'N/A')[:50]}...")
+                return None
             
             if creation_time:
                 # Вычисляем разницу в минутах
                 time_diff = current_time.replace(tzinfo=creation_time.tzinfo) - creation_time
-                return int(time_diff.total_seconds() / 60)
+                age_minutes = int(time_diff.total_seconds() / 60)
+                logger.debug(f"Возраст рынка: {age_minutes} мин (поле: {time_field})")
+                return age_minutes
             
             return None
             
