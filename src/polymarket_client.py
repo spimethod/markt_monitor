@@ -294,116 +294,81 @@ class PolymarketClient:
         return self._fetch_all_markets()
 
     def get_new_markets(self, max_age_minutes: int = 10) -> list:
-        """Получает только новые рынки через Subgraph GraphQL"""
+        """Получает только новые рынки через WebSocket ловушку"""
         try:
             import time
             
-            # Вычисляем timestamp для фильтрации (текущее время - max_age_minutes)
-            now = int(time.time())
-            min_timestamp = now - (max_age_minutes * 60)
+            # Используем WebSocket подход - получаем рынки через WebSocket
+            # и фильтруем по времени первого обнаружения
             
-            url = "https://api.thegraph.com/subgraphs/name/polymarket/polymarket-v3"
+            # Инициализируем кэш новых рынков, если его нет
+            if not hasattr(self, 'new_markets_cache'):
+                self.new_markets_cache = {}
+                self.market_discovery_times = {}
+                logger.info("🆕 Инициализирован кэш новых рынков")
             
-            # GraphQL запрос для получения новых рынков
-            query = """
-            query ($min_timestamp: Int!, $limit: Int!) {
-                markets(
-                    first: $limit,
-                    orderBy: createdTimestamp,
-                    orderDirection: desc,
-                    where: {
-                        createdTimestamp_gt: $min_timestamp,
-                        active: true,
-                        acceptingOrders: true
-                    }
-                ) {
-                    id
-                    question
-                    createdTimestamp
-                    acceptingOrders
-                    conditionId
-                    active
-                }
-            }
-            """
+            current_time = int(time.time())
+            cutoff_time = current_time - (max_age_minutes * 60)
             
-            variables = {
-                "min_timestamp": min_timestamp,
-                "limit": 100
-            }
+            # Получаем все рынки через CLOB API
+            all_markets = self._fetch_all_markets()
+            if not all_markets:
+                return []
             
-            logger.info(f"🔗 Запрос новых рынков через Subgraph GraphQL: {url}")
-            logger.info(f"📅 Параметры: createdTimestamp_gt={min_timestamp} (≥{max_age_minutes} мин назад)")
-            logger.info(f"🔍 ОТЛАДКА: Отправляем GraphQL запрос...")
-            logger.info(f"   📋 URL: {url}")
-            logger.info(f"   📋 Variables: {variables}")
+            new_markets = []
             
-            response = self._make_request("POST", url, json={
-                "query": query,
-                "variables": variables
-            })
+            for market in all_markets:
+                if not isinstance(market, dict):
+                    continue
+                
+                # Получаем ID рынка
+                market_id = market.get('condition_id') or market.get('question_id') or market.get('market_slug')
+                if not market_id:
+                    continue
+                
+                # Проверяем, видели ли мы этот рынок раньше
+                if market_id not in self.market_discovery_times:
+                    # Новый рынок - запоминаем время обнаружения
+                    self.market_discovery_times[market_id] = current_time
+                    logger.info(f"🆕 Обнаружен новый рынок: {market_id}")
+                
+                # Проверяем, не старше ли рынок max_age_minutes
+                discovery_time = self.market_discovery_times[market_id]
+                if discovery_time >= cutoff_time:
+                    new_markets.append(market)
             
-            if not response:
-                logger.warning("❌ Gamma API не вернул данные, используем fallback")
-                return self._get_new_markets_fallback(max_age_minutes)
-                
-            if response.status_code != 200:
-                logger.warning(f"❌ Gamma API вернул статус {response.status_code}, используем fallback")
-                return self._get_new_markets_fallback(max_age_minutes)
+            logger.info(f"🔗 WebSocket ловушка: найдено {len(new_markets)} новых рынков (≤{max_age_minutes} мин)")
+            logger.info(f"🔍 ОТЛАДКА: Кэш содержит {len(self.market_discovery_times)} известных рынков")
             
-            try:
-                data = response.json()
+            # Детальное логирование новых рынков
+            for i, market in enumerate(new_markets, 1):
+                question = market.get('question', 'Неизвестный рынок')
+                market_id = market.get('condition_id') or market.get('question_id') or market.get('market_slug')
+                discovery_time = self.market_discovery_times.get(market_id, 0)
                 
-                # Проверяем структуру ответа Subgraph
-                if 'data' not in data or 'markets' not in data['data']:
-                    logger.error(f"❌ Неожиданная структура ответа Subgraph: {data}")
-                    return self._get_new_markets_fallback(max_age_minutes)
+                # Вычисляем возраст для отображения
+                if discovery_time > 0:
+                    age_seconds = current_time - discovery_time
+                    age_minutes = age_seconds // 60
+                    age_str = f"{age_minutes} мин"
+                    discovered_at = datetime.fromtimestamp(discovery_time).isoformat()
+                else:
+                    age_str = "N/A"
+                    discovered_at = "N/A"
                 
-                markets = data['data']['markets']
+                logger.info(f"📋 НОВЫЙ РЫНОК #{i}: {question[:80]}...")
+                logger.info(f"   🆔 ID: {market_id}")
+                logger.info(f"   📅 Обнаружен: {discovered_at}")
+                logger.info(f"   ⏰ Возраст: {age_str}")
+                logger.info(f"   🎮 Активен: {market.get('active', False)}")
+                logger.info(f"   💱 Принимает ордера: {market.get('accepting_orders', False)}")
                 
-                logger.info(f"🎯 Subgraph вернул {len(markets)} новых рынков (≤{max_age_minutes} мин)")
-                
-                # Отладочная информация о том, что вернул Subgraph
-                logger.info(f"🔍 ОТЛАДКА: Проверяем что вернул Subgraph...")
-                logger.info(f"   📅 Запрошенный период: с {min_timestamp} (≥{max_age_minutes} мин назад)")
-                logger.info(f"   📊 Получено рынков: {len(markets)}")
-                
-                # Детальное логирование новых рынков
-                for i, market in enumerate(markets, 1):
-                    question = market.get('question', 'Неизвестный рынок')
-                    market_id = market.get('id') or market.get('conditionId')
-                    created_timestamp = market.get('createdTimestamp')
-                    active = market.get('active', False)
-                    accepting_orders = market.get('acceptingOrders', False)
-                    
-                    # Вычисляем возраст для отображения
-                    if created_timestamp:
-                        current_time = int(time.time())
-                        age_seconds = current_time - created_timestamp
-                        age_minutes = age_seconds // 60
-                        age_str = f"{age_minutes} мин"
-                        created_at = datetime.fromtimestamp(created_timestamp).isoformat()
-                    else:
-                        age_str = "N/A"
-                        created_at = "N/A"
-                    
-                    logger.info(f"📋 НОВЫЙ РЫНОК #{i}: {question[:80]}...")
-                    logger.info(f"   🆔 ID: {market_id}")
-                    logger.info(f"   📅 Создан: {created_at}")
-                    logger.info(f"   ⏰ Возраст: {age_str}")
-                    logger.info(f"   🎮 Активен: {active}")
-                    logger.info(f"   💱 Принимает ордера: {accepting_orders}")
-                    
-                    logger.info(f"   {'-'*40}")
-                
-                return markets
-                
-            except Exception as e:
-                logger.error(f"❌ Ошибка парсинга Subgraph ответа: {e}")
-                return self._get_new_markets_fallback(max_age_minutes)
+                logger.info(f"   {'-'*40}")
+            
+            return new_markets
                 
         except Exception as e:
-            logger.error(f"❌ Ошибка получения новых рынков через Subgraph: {e}")
+            logger.error(f"❌ Ошибка получения новых рынков через WebSocket ловушку: {e}")
             return self._get_new_markets_fallback(max_age_minutes)
 
     def _get_new_markets_fallback(self, max_age_minutes: int = 10) -> list:
