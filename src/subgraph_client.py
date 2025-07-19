@@ -7,7 +7,8 @@ from logging import getLogger
 logger = getLogger(__name__)
 
 # URL сабграфа Polymarket V3
-SUBGRAPH_URL = "https://api.thegraph.com/subgraphs/name/polymarket/polymarket-v3"
+# Добавляем завершающий слеш — без него Cloudflare перенаправляет (301)
+SUBGRAPH_URL = "https://api.thegraph.com/subgraphs/name/polymarket/polymarket-v3/"
 
 # GraphQL-запрос для получения новых рынков
 MARKETS_QUERY = """
@@ -66,7 +67,7 @@ async def fetch_new_markets(max_age_minutes: int = 10) -> list | None:
         logger.info(f"🔗 Запрос новых рынков через Subgraph: {SUBGRAPH_URL}")
         logger.debug(f"   📋 Variables: {variables}")
 
-        async with httpx.AsyncClient(timeout=15.0) as client:
+        async with httpx.AsyncClient(timeout=15.0, follow_redirects=True) as client:
             response = await client.post(SUBGRAPH_URL, json=payload)
             response.raise_for_status()
 
