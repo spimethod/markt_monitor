@@ -475,7 +475,7 @@ class TelegramNotifier:
             pnl = pos.get("pnl", 0.0)
             pnl_emoji = "📈" if pnl > 0 else "📉" if pnl < 0 else "📊"
 
-                text += f"""
+            text += f"""
 🏷️ <b>ID:</b> <code>{pos.get('id', 'N/A')[:10]}...</code>
 💱 <b>Токен:</b> <code>{pos.get('token_id', 'N/A')[:10]}...</code>
 📊 <b>Размер:</b> {pos.get('size', 0):.2f}
@@ -654,28 +654,28 @@ class TelegramNotifier:
 
     async def _handle_callback(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Обработка callback queries от inline кнопок"""
-            query = update.callback_query
-            if not query:
+        query = update.callback_query
+        if not query:
                 return
 
-            await query.answer()
+        await query.answer()
 
         if query.data == "status":
-                await self._handle_status_callback(query)
+            await self._handle_status_callback(query)
         elif query.data == "positions":
-                await self._handle_positions_callback(query)
+            await self._handle_positions_callback(query)
         elif query.data == "config":
-                await self._handle_config_callback(query)
+            await self._handle_config_callback(query)
         elif query.data == "stop":
-                await self._handle_stop_callback(query)
+            await self._handle_stop_callback(query)
         elif query.data == "start_trading":
-                await self._handle_start_trading_callback(query)
+            await self._handle_start_trading_callback(query)
         elif query.data == "logs":
             await self._handle_logs_callback(query)
 
     async def _handle_status_callback(self, query: CallbackQuery):
         """Обработка callback для статуса"""
-            stats = await self._get_current_stats()
+        stats = await self._get_current_stats()
 
             # Получаем статус базы данных
             db_status_text = ""
@@ -739,7 +739,7 @@ class TelegramNotifier:
             pnl = pos.get("pnl", 0.0)
             pnl_emoji = "📈" if pnl > 0 else "📉" if pnl < 0 else "📊"
 
-                text += f"""
+            text += f"""
 🏷️ <b>ID:</b> <code>{pos.get('id', 'N/A')[:10]}...</code>
 💱 <b>Токен:</b> <code>{pos.get('token_id', 'N/A')[:10]}...</code>
 📊 <b>Размер:</b> {pos.get('size', 0):.2f}
