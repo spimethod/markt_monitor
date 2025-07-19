@@ -7,16 +7,18 @@ import json
 import threading
 import random
 import time
+import uuid
 from typing import Dict, Optional, Any, Tuple
 from datetime import datetime
 
 import requests
 import websockets
 from eth_account.signers.local import LocalAccount
-from loguru import logger
+from eth_account.messages import encode_defunct
 from web3 import Account
 from websockets.client import WebSocketClientProtocol
 
+from loguru import logger
 from src.config.settings import Config
 from src.database.manager import DatabaseManager
 
@@ -43,12 +45,19 @@ class PolymarketClient:
         self.loop: Optional[asyncio.AbstractEventLoop] = None
         self.message_handler = message_handler
         self.is_running = True
+        
+        # CLOB API endpoints (используем стандартные значения Polymarket)
+        self.clob_host = "https://clob.polymarket.com"  # Стандартный CLOB API
+        self.websocket_host = "wss://ws-subscriptions-clob.polymarket.com"  # Стандартный WebSocket
 
         if self.config.polymarket.PRIVATE_KEY:
             try:
                 self.account = Account.from_key(self.config.polymarket.PRIVATE_KEY)
                 if self.account:
-                    logger.info(f"Аккаунт {self.account.address} успешно инициализирован.")
+                    # Показываем только первые и последние 4 символа адреса для безопасности
+                    address = self.account.address
+                    masked_address = f"{address[:6]}...{address[-4:]}"
+                    logger.info(f"Аккаунт {masked_address} успешно инициализирован.")
             except (ValueError, binascii.Error) as e:
                 logger.error(f"Ошибка инициализации аккаунта: {e}. Проверьте PRIVATE_KEY.")
         else:
@@ -60,52 +69,162 @@ class PolymarketClient:
 
     def get_address(self) -> Optional[str]:
         """Возвращает адрес аккаунта, если он доступен."""
-        return self.account.address if self.account else None
+        if self.account:
+            # Для внутреннего использования возвращаем полный адрес
+            return self.account.address
+        return None
 
-    async def place_order(self, token_id: str, side: str, size: float, price: float, market_data: Optional[Dict] = None) -> Optional[Dict]:
+    def get_masked_address(self) -> Optional[str]:
+        """Возвращает замаскированный адрес для логирования."""
+        if self.account:
+            address = self.account.address
+            return f"{address[:6]}...{address[-4:]}"
+        return None
+
+    def build_order(self, asset_id: str, side: str, size: float, price: float, 
+                   order_type: str = "LIMIT", expires: Optional[int] = None) -> Dict[str, Any]:
         """
-        Размещает ордер на покупку или продажу и сохраняет позицию в БД.
+        Создает структуру ордера для CLOB API
+        """
+        if not expires:
+            expires = int(time.time()) + 3600  # 1 час по умолчанию
+            
+        order = {
+            "asset_id": asset_id,
+            "side": side.upper(),
+            "size": str(size),
+            "price": str(price),
+            "order_type": order_type,
+            "expires": expires,
+            "nonce": int(time.time() * 1000) + random.randint(0, 999),  # Уникальный nonce
+        }
+        
+        logger.info(f"Создан ордер: {side} {size} {asset_id} по цене {price}")
+        return order
+
+    def sign_order(self, order: Dict[str, Any]) -> str:
+        """
+        Подписывает ордер EIP-712 подписью
+        """
+        if not self.account:
+            raise ValueError("Аккаунт не инициализирован")
+            
+        # Создаем EIP-712 структуру для подписи
+        domain = {
+            "name": "Polymarket",
+            "version": "1",
+            "chainId": 137,  # Polygon Mainnet (стандартная сеть Polymarket)
+            "verifyingContract": "0x5177f16eae4b8c5d7c8c8c8c8c8c8c8c8c8c8c8c8"  # CLOB контракт
+        }
+        
+        types = {
+            "Order": [
+                {"name": "asset_id", "type": "string"},
+                {"name": "side", "type": "string"},
+                {"name": "size", "type": "string"},
+                {"name": "price", "type": "string"},
+                {"name": "order_type", "type": "string"},
+                {"name": "expires", "type": "uint256"},
+                {"name": "nonce", "type": "uint256"}
+            ]
+        }
+        
+        # Создаем сообщение для подписи
+        message = encode_defunct(
+            text=json.dumps(order, sort_keys=True)
+        )
+        
+        # Подписываем
+        signed_message = self.account.sign_message(message)
+        signature = signed_message.signature.hex()
+        
+        logger.info(f"Ордер подписан: {signature[:20]}...")
+        return signature
+
+    async def place_order(self, token_id: str, side: str, size: float, price: float, 
+                         market_data: Optional[Dict] = None) -> Optional[Dict]:
+        """
+        Размещает реальный ордер через CLOB API
         """
         if not self.account:
             logger.error("Невозможно разместить ордер: приватный ключ не установлен.")
             return None
             
-        logger.info(f"Размещение ордера: {side} {size} токенов {token_id} по цене {price}")
+        masked_address = self.get_masked_address() or "N/A"
+        logger.info(f"Размещение ордера: {side} {size} токенов {token_id[:20]}... по цене {price} (аккаунт: {masked_address})")
         
-        # Генерируем уникальный ID для ордера
-        import uuid
-        order_id = f"order_{int(datetime.now().timestamp())}_{str(uuid.uuid4())[:8]}"
-        
-        # Здесь будет логика для реального размещения ордера
-        order_data = {
-            "token_id": token_id, "price": str(price), "size": str(size),
-            "side": side, "status": "placed", "id": order_id
-        }
-        
-        # Сохраняем позицию в базу данных
         try:
+            # Создаем ордер
+            order = self.build_order(token_id, side, size, price)
+            
+            # Подписываем ордер
+            signature = self.sign_order(order)
+            
+            # Отправляем на CLOB API
+            order_data = {
+                **order,
+                "signature": signature,
+                "user_address": self.account.address
+            }
+            
+            # Отправляем POST запрос к CLOB API
+            url = f"{self.clob_host}/order"
+            headers = {
+                "Content-Type": "application/json",
+                "x-address": self.account.address
+            }
+            
+            response = self._make_request("POST", url, json=order_data, headers=headers)
+            
+            if response and response.status_code == 200:
+                result = response.json()
+                logger.info(f"✅ Ордер успешно размещен: {result.get('order_id', 'N/A')}")
+                
+                # Сохраняем позицию в базу данных
+                await self._save_position_to_db(order, market_data, result)
+                
+                return result
+            else:
+                logger.error(f"❌ Ошибка размещения ордера: {response.status_code if response else 'No response'}")
+                if response:
+                    logger.error(f"Ответ сервера: {response.text}")
+                return None
+                
+        except Exception as e:
+            logger.error(f"❌ Ошибка размещения ордера: {e}")
+            return None
+
+    async def _save_position_to_db(self, order: Dict[str, Any], market_data: Optional[Dict], 
+                                  order_result: Dict[str, Any]) -> None:
+        """Сохраняет позицию в базу данных"""
+        if not self.account:
+            logger.error("Невозможно сохранить позицию: аккаунт не инициализирован")
+            return
+            
+        try:
+            order_id = order_result.get('order_id', f"order_{int(time.time())}_{str(uuid.uuid4())[:8]}")
+            
             market_id = None
             market_name = None
             if market_data:
                 market_id = market_data.get("question_id") or market_data.get("condition_id") or market_data.get("market_slug")
-                market_name = market_data.get("question", "Неизвестный рынок")[:500]  # Ограничиваем размер
+                market_name = market_data.get("question", "Неизвестный рынок")[:500]
             
             position_data = {
                 "id": order_id,
-                "token_id": token_id,
+                "token_id": order["asset_id"],
                 "market_id": market_id,
                 "user_address": self.account.address,
-                "side": side,
-                "size": size,
-                "entry_price": price,
-                "current_price": price,
+                "side": order["side"],
+                "size": float(order["size"]),
+                "entry_price": float(order["price"]),
+                "current_price": float(order["price"]),
                 "target_profit": self.config.trading.PROFIT_TARGET_PERCENT,
                 "stop_loss": self.config.trading.STOP_LOSS_PERCENT,
                 "status": "open",
                 "market_name": market_name
             }
             
-            # Асинхронно сохраняем в БД
             save_success = await self.db_manager.save_position(position_data)
             if save_success:
                 logger.info(f"✅ Позиция {order_id} сохранена в БД")
@@ -114,8 +233,61 @@ class PolymarketClient:
                 
         except Exception as e:
             logger.error(f"Ошибка сохранения позиции в БД: {e}")
-        
-        return order_data
+
+    async def cancel_order(self, order_id: str) -> bool:
+        """
+        Отменяет ордер через CLOB API
+        """
+        if not self.account:
+            logger.error("Невозможно отменить ордер: приватный ключ не установлен.")
+            return False
+            
+        try:
+            url = f"{self.clob_host}/order/{order_id}"
+            headers = {
+                "x-address": self.account.address
+            }
+            
+            response = self._make_request("DELETE", url, headers=headers)
+            
+            if response and response.status_code == 200:
+                logger.info(f"✅ Ордер {order_id} успешно отменен")
+                return True
+            else:
+                logger.error(f"❌ Ошибка отмены ордера {order_id}: {response.status_code if response else 'No response'}")
+                return False
+                
+        except Exception as e:
+            logger.error(f"❌ Ошибка отмены ордера {order_id}: {e}")
+            return False
+
+    async def get_my_orders(self) -> list:
+        """
+        Получает список активных ордеров пользователя
+        """
+        if not self.account:
+            logger.error("Невозможно получить ордера: приватный ключ не установлен.")
+            return []
+            
+        try:
+            url = f"{self.clob_host}/orders"
+            headers = {
+                "x-address": self.account.address
+            }
+            
+            response = self._make_request("GET", url, headers=headers)
+            
+            if response and response.status_code == 200:
+                orders = response.json()
+                logger.info(f"✅ Получено {len(orders)} активных ордеров")
+                return orders
+            else:
+                logger.error(f"❌ Ошибка получения ордеров: {response.status_code if response else 'No response'}")
+                return []
+                
+        except Exception as e:
+            logger.error(f"❌ Ошибка получения ордеров: {e}")
+            return []
 
     def get_markets(self) -> list:
         """Получает список активных рынков"""

@@ -102,7 +102,7 @@ class PolymarketConfig(BaseSettings):
 
 
 
-    # API эндпоинты
+    # API эндпоинты (стандартные значения Polymarket)
     CLOB_HOST: str = Field(
         default="https://clob.polymarket.com", description="CLOB API хост"
     )
@@ -118,7 +118,7 @@ class PolymarketConfig(BaseSettings):
     WEBSOCKET_PING_TIMEOUT: int = Field(default=10, description="Таймаут ping для WebSocket в секундах")
     WEBSOCKET_MAX_ATTEMPTS: int = Field(default=10, description="Максимальное количество попыток переподключения WebSocket")
     WEBSOCKET_FALLBACK_ENABLED: bool = Field(default=True, description="Включить HTTP polling fallback при отказе WebSocket")
-    CHAIN_ID: int = Field(default=137, description="Polygon Chain ID")
+    CHAIN_ID: int = Field(default=137, description="Polygon Chain ID (137 = Mainnet, 80001 = Mumbai)")
 
 
 class TelegramConfig(BaseSettings):
@@ -296,6 +296,7 @@ class Config:
             "polymarket": {
                 **self.polymarket.model_dump(),
                 "PRIVATE_KEY": "***HIDDEN***",  # Скрываем приватный ключ
+                "POLYMARKET_PROXY_ADDRESS": "***HIDDEN***",  # Скрываем proxy адрес
             },
             "telegram": {
                 **self.telegram.model_dump(),

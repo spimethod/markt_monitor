@@ -160,11 +160,13 @@ class TradingEngine:
         self.is_running = False
         self.stats = {"total_trades": 0, "successful_trades": 0, "total_profit": 0.0}
 
+        # Торговля включена по умолчанию
+        self.is_trading_enabled = True
+        
         if self.client.get_address():
             logger.info(f"Торговый движок инициализирован для аккаунта: {self.client.get_address()}")
-            self.is_trading_enabled = True
         else:
-            logger.warning("PRIVATE_KEY не установлен. Торговля и управление позициями будут отключены.")
+            logger.warning("PRIVATE_KEY не установлен. Торговля будет недоступна до установки ключа.")
             self.is_trading_enabled = False
 
     async def start(self):

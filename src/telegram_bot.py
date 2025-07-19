@@ -97,6 +97,11 @@ class TelegramNotifier:
             self.app.add_handler(CommandHandler("config", self._cmd_config))
             self.app.add_handler(CommandHandler("logs", self._cmd_logs))
             self.app.add_handler(CommandHandler("help", self._cmd_help))
+            
+            # Новые команды для торговли
+            self.app.add_handler(CommandHandler("orders", self._cmd_orders))
+            self.app.add_handler(CommandHandler("cancel", self._cmd_cancel_order))
+            self.app.add_handler(CommandHandler("trade", self._cmd_trade))
 
             # Обработчики inline кнопок
             self.app.add_handler(CallbackQueryHandler(self._handle_callback))
@@ -625,6 +630,7 @@ class TelegramNotifier:
         text = """
 📚 <b>Справка по командам</b>
 
+📋 <b>Основные команды:</b>
 /start - Запуск бота
 /status - Статус бота
 /positions - Открытые позиции
@@ -633,6 +639,11 @@ class TelegramNotifier:
 /config - Конфигурация
 /logs - Последние логи
 /help - Эта справка
+
+📈 <b>Торговые команды:</b>
+/orders - Активные ордера
+/cancel [order_id] - Отменить ордер
+/trade [market_id] [side] [size] [price] - Ручная торговля
 
 💡 <i>Все команды доступны через меню или inline-кнопки</i>
         """
@@ -862,6 +873,143 @@ class TelegramNotifier:
 ⏰ <i>{datetime.utcnow().strftime('%H:%M:%S')} UTC</i>
             """
             await query.edit_message_text(error_text, parse_mode=ParseMode.HTML)
+
+    async def _cmd_orders(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Обработчик команды /orders - показывает активные ордера"""
+        if not update.message:
+            return
+            
+        try:
+            if not self.trading_engine or not self.trading_engine.client:
+                await update.message.reply_text("❌ Торговый движок недоступен")
+                return
+
+            orders = await self.trading_engine.client.get_my_orders()
+            
+            if not orders:
+                await update.message.reply_text("📋 Нет активных ордеров")
+                return
+
+            text = f"📋 <b>Активные ордера ({len(orders)}):</b>\n\n"
+            
+            for i, order in enumerate(orders[:10], 1):  # Показываем первые 10
+                side_emoji = "🟢" if order.get("side") == "BUY" else "🔴"
+                text += f"{i}. {side_emoji} <b>{order.get('side', 'N/A')}</b>\n"
+                text += f"   🏷️ ID: <code>{order.get('order_id', 'N/A')}</code>\n"
+                text += f"   💱 Токен: <code>{order.get('asset_id', 'N/A')[:20]}...</code>\n"
+                text += f"   📊 Размер: {order.get('size', 0):.2f}\n"
+                text += f"   💰 Цена: ${order.get('price', 0):.4f}\n"
+                text += f"   📅 Истекает: {self._format_timestamp(order.get('expires'))}\n\n"
+
+            await update.message.reply_text(text, parse_mode=ParseMode.HTML)
+            
+        except Exception as e:
+            logger.error(f"Ошибка получения ордеров: {e}")
+            await update.message.reply_text(f"❌ Ошибка получения ордеров: {str(e)}")
+
+    async def _cmd_cancel_order(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Обработчик команды /cancel [order_id] - отменяет ордер"""
+        if not update.message:
+            return
+            
+        try:
+            if not context.args or len(context.args) == 0:
+                await update.message.reply_text("❌ Укажите ID ордера: /cancel [order_id]")
+                return
+
+            order_id = context.args[0]
+            
+            if not self.trading_engine or not self.trading_engine.client:
+                await update.message.reply_text("❌ Торговый движок недоступен")
+                return
+
+            success = await self.trading_engine.client.cancel_order(order_id)
+            
+            if success:
+                await update.message.reply_text(f"✅ Ордер {order_id} успешно отменен")
+            else:
+                await update.message.reply_text(f"❌ Не удалось отменить ордер {order_id}")
+                
+        except Exception as e:
+            logger.error(f"Ошибка отмены ордера: {e}")
+            await update.message.reply_text(f"❌ Ошибка отмены ордера: {str(e)}")
+
+    async def _cmd_trade(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Обработчик команды /trade [market_id] [side] [size] [price] - ручная торговля"""
+        if not update.message:
+            return
+            
+        try:
+            if not context.args or len(context.args) < 4:
+                await update.message.reply_text(
+                    "❌ Недостаточно параметров: /trade [market_id] [side] [size] [price]\n"
+                    "Пример: /trade 123 BUY 100 0.5"
+                )
+                return
+
+            market_id, side, size_str, price_str = context.args[:4]
+            
+            try:
+                size = float(size_str)
+                price = float(price_str)
+            except ValueError:
+                await update.message.reply_text("❌ Размер и цена должны быть числами")
+                return
+
+            if side.upper() not in ["BUY", "SELL"]:
+                await update.message.reply_text("❌ Сторона должна быть BUY или SELL")
+                return
+
+            if not self.trading_engine or not self.trading_engine.client:
+                await update.message.reply_text("❌ Торговый движок недоступен")
+                return
+
+            # Получаем данные рынка
+            markets = self.trading_engine.client.get_markets()
+            market_data = None
+            
+            for market in markets:
+                if (market.get("question_id") == market_id or 
+                    market.get("condition_id") == market_id or 
+                    market.get("market_slug") == market_id):
+                    market_data = market
+                    break
+
+            if not market_data:
+                await update.message.reply_text(f"❌ Рынок {market_id} не найден")
+                return
+
+            # Получаем token_id для нужной стороны
+            token_id = None
+            for token in market_data.get("tokens", []):
+                if side.upper() == "BUY" and "YES" in token.get("outcome", ""):
+                    token_id = token.get("token_id")
+                    break
+                elif side.upper() == "SELL" and "NO" in token.get("outcome", ""):
+                    token_id = token.get("token_id")
+                    break
+
+            if not token_id:
+                await update.message.reply_text(f"❌ Не удалось найти токен для {side}")
+                return
+
+            # Размещаем ордер
+            order_result = await self.trading_engine.client.place_order(
+                token_id, side.upper(), size, price, market_data
+            )
+
+            if order_result:
+                await update.message.reply_text(
+                    f"✅ Ордер размещен!\n"
+                    f"🏷️ ID: {order_result.get('order_id', 'N/A')}\n"
+                    f"💱 {side.upper()} {size} по цене ${price:.4f}"
+                )
+            else:
+                await update.message.reply_text("❌ Не удалось разместить ордер")
+                
+        except Exception as e:
+            logger.error(f"Ошибка ручной торговли: {e}")
+            await update.message.reply_text(f"❌ Ошибка торговли: {str(e)}")
 
 
 # Глобальный экземпляр
