@@ -230,7 +230,13 @@ class TradingEngine:
                     # Детальная информация о рынке из Subgraph
                     created_timestamp = market.get('createdTimestamp')
                     if created_timestamp:
-                        created_dt = datetime.fromtimestamp(int(created_timestamp))
+                        # Обрабатываем разные форматы timestamp
+                        if isinstance(created_timestamp, str) and "Z" in created_timestamp:
+                             created_dt = datetime.fromisoformat(created_timestamp.replace("Z", "+00:00"))
+                             created_timestamp = int(created_dt.timestamp())
+                        else:
+                             created_dt = datetime.fromtimestamp(int(created_timestamp))
+                        
                         age_seconds = int(time.time()) - int(created_timestamp)
                         age_str = f"{age_seconds // 60} мин {age_seconds % 60} сек"
                     else:
@@ -248,85 +254,111 @@ class TradingEngine:
                     if tokens:
                         logger.info(f"   🎯 ТОКЕНЫ ({len(tokens)}):")
                         for j, token in enumerate(tokens, 1):
-                            logger.info(f"      #{j} {token.get('name', 'N/A')}: цена {token.get('price', 'N/A')}")
-                    else:
-                        logger.info(f"   ❌ Токены не найдены (возможно, нужно запросить дополнительно)")
+                            token_name = token.get('name') or token.get('outcome')
+                            token_price = token.get('price', 'N/A')
+                            logger.info(f"      #{j} {token_name}: цена {token_price}")
                     
-                    # Анализ пригодности
+                    # Проверяем, подходит ли рынок для торговли
                     should_trade, reason = self.market_filter.should_trade_market(market)
                     
                     if should_trade:
                         suitable_markets += 1
-                        logger.info(f"   ✅ ПОДХОДЯЩИЙ РЫНОК!")
-                        logger.info(f"   🎯 Причина: {reason}")
+                        logger.info(f"   ✅ ПОДХОДИТ: {reason}")
                         
-                        if not self.is_trading_enabled:
-                            logger.warning(f"   ⚠️  Торговля отключена (нет приватного ключа)")
-                            await telegram_notifier.send_new_market_notification(market)
-                            continue
-                            
-                        logger.info(f"   🚀 Попытка торговли...")
-                        await self._attempt_trade(market)
-                        
-                        new_markets_found += 1
+                        if self.is_trading_enabled:
+                            await self._attempt_trade(market)
+                            new_markets_found += 1
+                        else:
+                            logger.info("   ⚠️ Торговля отключена, ордер не размещен.")
                     else:
                         logger.info(f"   ❌ НЕ ПОДХОДИТ: {reason}")
+
+                    logger.info("   ==================================================")
                     
-                    logger.info(f"   {'='*50}")
-                
-                # Сводка по циклу
                 if new_markets_found > 0:
-                    logger.info(f"🎯 ИТОГ ПОИСКА: найдено {suitable_markets} подходящих рынков из {len(markets)}")
-                    await telegram_notifier.send_search_summary(len(markets), suitable_markets, new_markets_found)
-                else:
-                    logger.info(f"🔍 Поиск завершен: проанализировано {len(markets)} рынков, новых подходящих не найдено")
+                    await telegram_notifier.send_search_summary(
+                        total_markets=len(markets),
+                        suitable_markets=suitable_markets,
+                        new_markets=new_markets_found
+                    )
                 
-                await asyncio.sleep(60)  # Проверяем каждую минуту
+                await asyncio.sleep(60)
                 
             except Exception as e:
-                logger.error(f"Ошибка в мониторинге рынков: {e}")
+                logger.error(f"❌ Ошибка в цикле мониторинга рынков: {e}", exc_info=True)
+                await telegram_notifier.send_error_notification(f"Ошибка мониторинга: {e}")
                 await asyncio.sleep(60)
 
     async def _attempt_trade(self, market_data: Dict):
-        if not self.is_trading_enabled: return
+        """Пытается совершить сделку по заданному рынку"""
+        try:
+            target_token_id = self._get_target_token_id(market_data)
+            if not target_token_id:
+                logger.warning("Не найден целевой токен для торговли")
+                return
 
-        token_id = self._get_target_token_id(market_data)
-        if not token_id: return
+            # Находим цену из данных о токенах
+            price = None
+            for token in market_data.get('tokens', []):
+                if token.get('id') == target_token_id:
+                    price_value = token.get('price')
+                    try:
+                        price = float(price_value)
+                    except (TypeError, ValueError):
+                        price = None
+                    break
 
-        price = self.client.get_current_price(token_id)
-        if not price: return
+            if price is None:
+                price = self.client.get_current_price(target_token_id)  # fallback
 
-        # Проверяем максимальную цену для позиции NO
-        if config.trading.POSITION_SIDE == "NO" and price > config.trading.MAX_NO_PRICE:
-            logger.info(f"Пропускаем рынок: цена NO {price:.4f} превышает максимум {config.trading.MAX_NO_PRICE}")
-            return
+            if price is None or price <= 0:
+                logger.warning("Не удалось определить цену токена — пропускаем рынок")
+                return
 
-        # Используем фиксированный размер позиции
-        position_size_usd = config.trading.POSITION_SIZE_USD
+            # Для стратегии NO проверяем лимит цены
+            if config.trading.POSITION_SIDE.upper() == "NO" and price > config.trading.MAX_NO_PRICE:
+                logger.info(f"Пропускаем рынок: цена NO {price:.4f} превышает лимит {config.trading.MAX_NO_PRICE}")
+                return
 
-        side = "BUY"
-        size = position_size_usd / price
+            # Размер позиции в токенах
+            position_size_usd = config.trading.POSITION_SIZE_USD
+            size_tokens = position_size_usd / price
 
-        order_result = await self.client.place_order(token_id, side, size, price, market_data)
-        if order_result:
-            self.stats["total_trades"] += 1
-            logger.info(f"Сделка совершена: {order_result}")
-            
-            # Добавляем рынок в список с активными позициями 
-            # чтобы он не исключался через 10 минут
-            market_id = market_data.get("question_id") or market_data.get("condition_id") or market_data.get("market_slug")
-            if market_id:
-                self.market_filter.markets_with_positions.add(market_id)
-                logger.info(f"📌 Рынок {market_id} добавлен в список с активными позициями")
-        else:
-            logger.warning(f"❌ Не удалось открыть позицию для рынка: {market_data.get('question', 'N/A')}")
+            side = "BUY"  # Покупаем целевой токен (YES или NO)
+
+            order_result = await self.client.place_order(
+                token_id=target_token_id,
+                side=side,
+                size=size_tokens,
+                price=price,
+                market_data=market_data
+            )
+
+            if order_result:
+                self.stats["total_trades"] += 1
+                await telegram_notifier.send_trade_notification({
+                    "order_id": order_result.get("order_id"),
+                    "token_id": target_token_id,
+                    "side": side,
+                    "size": size_tokens,
+                    "price": price
+                })
+
+        except Exception as e:
+            logger.error(f"Ошибка при попытке торговли: {e}", exc_info=True)
+            await telegram_notifier.send_error_notification(f"Ошибка торговли: {e}")
 
     def _get_target_token_id(self, market_data: Dict) -> Optional[str]:
-        for token in market_data.get("tokens", []):
-            if config.trading.POSITION_SIDE == "YES" and "YES" in token.get("name", ""):
-                return token.get("id")
-            if config.trading.POSITION_SIDE == "NO" and "NO" in token.get("name", ""):
-                return token.get("id")
+        """Возвращает ID целевого токена (например, 'NO')"""
+        target_side = config.trading.POSITION_SIDE.upper() # 'BUY' или 'SELL'
+        target_outcome_name = "NO" if target_side == 'BUY' else 'YES'
+        
+        for token in market_data.get('tokens', []):
+            token_outcome = token.get('outcome', '').upper()
+            if token_outcome == target_outcome_name:
+                return token.get('id')
+                
+        logger.warning(f"Не найден токен для исхода '{target_outcome_name}'")
         return None
 
     async def _position_monitor_task(self):

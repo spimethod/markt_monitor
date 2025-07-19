@@ -322,10 +322,35 @@ class PolymarketClient:
             logger.error(f"Error: {e}")
             return None
 
+    def _normalize_market_data(self, market_data: Dict) -> Dict:
+        """Приводит данные о рынке к единому формату (как у Subgraph)"""
+        return {
+            "id": market_data.get("condition_id"),  # Основной ID
+            "conditionId": market_data.get("condition_id"), # Дублируем для совместимости
+            "question": market_data.get("question"),
+            "slug": market_data.get("slug"),
+            "createdTimestamp": market_data.get("created_at"),
+            "active": market_data.get("active", False),
+            "acceptingOrders": market_data.get("accepting_orders", False), # Нормализуем ключ
+            "tokens": [
+                {
+                    "id": token.get("id"),
+                    "name": token.get("name"),
+                    "outcome": token.get("name"), # В fallback нет outcome, используем name
+                    "price": token.get("price")
+                }
+                for token in market_data.get("tokens", [])
+            ]
+        }
+        
     def get_all_markets_fallback(self) -> list:
         """Fallback-метод: получает все активные рынки через CLOB API."""
         logger.warning("⚠️  Активирован fallback-метод: получение рынков через CLOB API.")
-        return self._fetch_all_markets()
+        raw_markets = self._fetch_all_markets()
+        
+        normalized_markets = [self._normalize_market_data(m) for m in raw_markets]
+        
+        return normalized_markets
 
     def _fetch_all_markets(self) -> list:
         """Получает все рынки от Polymarket CLOB API."""
