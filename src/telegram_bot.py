@@ -48,13 +48,13 @@ def tail_log(path: pathlib.Path, n: int) -> str:
         with path.open("r", encoding="utf-8") as f:
             lines = f.readlines()
             if not lines:
-                return "Лог пуст"
+            return "Лог пуст"
             
             # Берем последние n строк
             last_lines = lines[-n:] if len(lines) > n else lines
-            return "".join(last_lines)
+        return "".join(last_lines)
     except Exception as e:
-            return f"Ошибка чтения логов: {e}"
+        return f"Ошибка чтения логов: {e}"
 
 
 def escape_html(text: str) -> str:
@@ -178,7 +178,7 @@ class TelegramNotifier:
         ]
         reply_markup = InlineKeyboardMarkup(keyboard)
 
-        await self.send_message(text, reply_markup=reply_markup)
+            await self.send_message(text, reply_markup=reply_markup)
 
     async def send_new_market_notification(self, market_data: Dict):
         """Уведомление о новом рынке"""
@@ -244,7 +244,7 @@ class TelegramNotifier:
         ]
         reply_markup = InlineKeyboardMarkup(keyboard)
 
-        await self.send_message(text, reply_markup=reply_markup)
+            await self.send_message(text, reply_markup=reply_markup)
 
     async def send_error_notification(self, error_msg: str):
         """Уведомление об ошибке"""
@@ -265,7 +265,7 @@ class TelegramNotifier:
         ]
         reply_markup = InlineKeyboardMarkup(keyboard)
 
-        await self.send_message(text, reply_markup=reply_markup)
+            await self.send_message(text, reply_markup=reply_markup)
 
     async def send_websocket_fallback_notification(self):
         """Уведомление о переходе на HTTP polling"""
@@ -300,7 +300,7 @@ class TelegramNotifier:
     async def _get_current_stats(self) -> Dict:
         """Получение текущей статистики"""
         if self.trading_engine:
-        return {
+            return {
                 "is_trading_enabled": self.trading_engine.is_trading_enabled,
                 "total_trades": self.trading_engine.stats.get("total_trades", 0),
                 "successful_trades": self.trading_engine.stats.get("successful_trades", 0),
@@ -308,7 +308,7 @@ class TelegramNotifier:
                 "open_positions": len(self._get_open_positions()),
                 "daily_trades": self.trading_engine.stats.get("daily_trades", 0),
             }
-        return {
+            return {
             "is_trading_enabled": False,
             "total_trades": 0,
             "successful_trades": 0,
@@ -320,12 +320,12 @@ class TelegramNotifier:
     def _get_open_positions(self) -> List[Dict]:
         """Получение открытых позиций"""
         if self.trading_engine and hasattr(self.trading_engine, "client"):
-        return [
+            return [
                 p
                 for p in self.trading_engine.client.active_positions.values()
                 if p["status"] == "open"
             ]
-        return []
+            return []
 
     def _format_timestamp(self, timestamp: Union[datetime, str, None]) -> str:
         """Безопасное форматирование timestamp"""
@@ -336,7 +336,7 @@ class TelegramNotifier:
                 dt = datetime.fromisoformat(timestamp.replace("Z", "+00:00"))
             return dt.strftime("%Y-%m-%d %H:%M")
             except (ValueError, AttributeError):
-                return timestamp[:16] if len(timestamp) > 16 else timestamp
+            return timestamp[:16] if len(timestamp) > 16 else timestamp
             return "N/A"
 
     def _get_logs_content(self) -> str:
@@ -346,16 +346,16 @@ class TelegramNotifier:
             
             # Проверяем существование файла
             if not log_path.exists():
-                return f"Файл логов не найден: {log_path.absolute()}"
+            return f"Файл логов не найден: {log_path.absolute()}"
             
             # Проверяем размер файла
             file_size = log_path.stat().st_size
             if file_size == 0:
-                return "Файл логов пуст"
+            return "Файл логов пуст"
             
             content = tail_log(log_path, TAIL_LINES)
             if not content or content.strip() == "":
-                return f"Лог пуст или недоступен. Размер файла: {file_size} байт"
+            return f"Лог пуст или недоступен. Размер файла: {file_size} байт"
             
             # Экранируем HTML символы
             escaped_content = escape_html(content)
@@ -399,7 +399,7 @@ class TelegramNotifier:
         ]
         reply_markup = InlineKeyboardMarkup(keyboard)
 
-        await update.message.reply_text(
+            await update.message.reply_text(
             text, parse_mode=ParseMode.HTML, reply_markup=reply_markup
         )
 
@@ -444,7 +444,7 @@ class TelegramNotifier:
         ]
         reply_markup = InlineKeyboardMarkup(keyboard)
 
-        await update.message.reply_text(
+            await update.message.reply_text(
             text, parse_mode=ParseMode.HTML, reply_markup=reply_markup
         )
 
@@ -463,7 +463,7 @@ class TelegramNotifier:
             ]
         reply_markup = InlineKeyboardMarkup(keyboard)
 
-        await update.message.reply_text(
+            await update.message.reply_text(
                 text, parse_mode=ParseMode.HTML, reply_markup=reply_markup
             )
             return
@@ -493,7 +493,7 @@ class TelegramNotifier:
         ]
         reply_markup = InlineKeyboardMarkup(keyboard)
 
-        await update.message.reply_text(
+            await update.message.reply_text(
             text, parse_mode=ParseMode.HTML, reply_markup=reply_markup
         )
 
@@ -522,7 +522,7 @@ class TelegramNotifier:
         ]
         reply_markup = InlineKeyboardMarkup(keyboard)
 
-        await update.message.reply_text(
+            await update.message.reply_text(
             text, parse_mode=ParseMode.HTML, reply_markup=reply_markup
         )
 
@@ -551,7 +551,7 @@ class TelegramNotifier:
         ]
         reply_markup = InlineKeyboardMarkup(keyboard)
 
-        await update.message.reply_text(
+            await update.message.reply_text(
             text, parse_mode=ParseMode.HTML, reply_markup=reply_markup
         )
 
@@ -582,7 +582,7 @@ class TelegramNotifier:
 💬 <i>Для изменения параметров обновите переменные окружения в Railway</i>
         """
 
-        await update.message.reply_text(text, parse_mode=ParseMode.HTML)
+            await update.message.reply_text(text, parse_mode=ParseMode.HTML)
 
     async def _cmd_logs(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Команда /logs"""
@@ -608,7 +608,7 @@ class TelegramNotifier:
             ]
         reply_markup = InlineKeyboardMarkup(keyboard)
 
-        await update.message.reply_text(text, parse_mode=ParseMode.HTML, reply_markup=reply_markup)
+            await update.message.reply_text(text, parse_mode=ParseMode.HTML, reply_markup=reply_markup)
             logger.info("Команда /logs успешно выполнена")
             
         except Exception as e:
@@ -620,7 +620,7 @@ class TelegramNotifier:
 
 ⏰ <i>{datetime.utcnow().strftime('%H:%M:%S')} UTC</i>
         """
-        await update.message.reply_text(error_text, parse_mode=ParseMode.HTML)
+            await update.message.reply_text(error_text, parse_mode=ParseMode.HTML)
 
     async def _cmd_help(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Команда /help"""
@@ -648,7 +648,7 @@ class TelegramNotifier:
 💡 <i>Все команды доступны через меню или inline-кнопки</i>
         """
 
-        await update.message.reply_text(text, parse_mode=ParseMode.HTML)
+            await update.message.reply_text(text, parse_mode=ParseMode.HTML)
 
     # ===== ОБРАБОТЧИКИ CALLBACK =====
 
@@ -901,11 +901,11 @@ class TelegramNotifier:
                 text += f"   💰 Цена: ${order.get('price', 0):.4f}\n"
                 text += f"   📅 Истекает: {self._format_timestamp(order.get('expires'))}\n\n"
 
-        await update.message.reply_text(text, parse_mode=ParseMode.HTML)
+            await update.message.reply_text(text, parse_mode=ParseMode.HTML)
             
         except Exception as e:
             logger.error(f"Ошибка получения ордеров: {e}")
-        await update.message.reply_text(f"❌ Ошибка получения ордеров: {str(e)}")
+            await update.message.reply_text(f"❌ Ошибка получения ордеров: {str(e)}")
 
     async def _cmd_cancel_order(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Обработчик команды /cancel [order_id] - отменяет ордер"""
@@ -932,7 +932,7 @@ class TelegramNotifier:
                 
         except Exception as e:
             logger.error(f"Ошибка отмены ордера: {e}")
-        await update.message.reply_text(f"❌ Ошибка отмены ордера: {str(e)}")
+            await update.message.reply_text(f"❌ Ошибка отмены ордера: {str(e)}")
 
     async def _cmd_trade(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Обработчик команды /trade [market_id] [side] [size] [price] - ручная торговля"""
@@ -1009,7 +1009,7 @@ class TelegramNotifier:
                 
         except Exception as e:
             logger.error(f"Ошибка ручной торговли: {e}")
-        await update.message.reply_text(f"❌ Ошибка торговли: {str(e)}")
+            await update.message.reply_text(f"❌ Ошибка торговли: {str(e)}")
 
 
 # Глобальный экземпляр
