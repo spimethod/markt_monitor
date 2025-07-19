@@ -55,11 +55,23 @@ class MarketFilter:
         # Проверяем tokens (новый формат)
         tokens = market_data.get("tokens", [])
         if tokens:
-            return len(tokens) == 2
+            token_count = len(tokens)
+            logger.info(f"      🔍 Бинарность (tokens): {token_count} токенов")
+            if token_count != 2:
+                logger.info(f"      ❌ Не бинарный: {token_count} токенов (нужно 2)")
+                return False
+            logger.info(f"      ✅ Бинарный рынок: {token_count} токенов")
+            return True
         
         # Fallback на outcomes (старый формат)
         outcomes = market_data.get("outcomes", [])
-        return len(outcomes) == 2
+        outcome_count = len(outcomes)
+        logger.info(f"      🔍 Бинарность (outcomes): {outcome_count} исходов")
+        if outcome_count != 2:
+            logger.info(f"      ❌ Не бинарный: {outcome_count} исходов (нужно 2)")
+            return False
+        logger.info(f"      ✅ Бинарный рынок: {outcome_count} исходов")
+        return True
 
     def check_liquidity_requirement(self, market_data: Dict) -> bool:
         """Проверяет требования к ликвидности"""
@@ -69,12 +81,14 @@ class MarketFilter:
         accepts_orders = market_data.get("accepting_orders", False)
         is_closed = market_data.get("closed", True)
         
+        logger.info(f"      🔍 Ликвидность: active={is_active}, accepts_orders={accepts_orders}, closed={is_closed}")
+        
         # Рынок должен быть активен, принимать ордера и не быть закрытым
         if is_active and accepts_orders and not is_closed:
-            logger.debug(f"✅ Рынок активен и принимает ордера")
+            logger.info(f"      ✅ Рынок активен и принимает ордера")
             return True
         else:
-            logger.debug(f"❌ Рынок неактивен: active={is_active}, accepts_orders={accepts_orders}, closed={is_closed}")
+            logger.info(f"      ❌ Рынок неактивен: active={is_active}, accepts_orders={accepts_orders}, closed={is_closed}")
             return False
 
     def check_time_window(self, market_data: Dict) -> Tuple[bool, str]:
@@ -87,7 +101,7 @@ class MarketFilter:
         
         # Если рынок имеет активные позиции - всегда разрешаем торговлю
         if hasattr(self, 'markets_with_positions') and market_id in self.markets_with_positions:
-            logger.debug(f"✅ Рынок {market_id} имеет активную позицию - пропускаем проверку времени")
+            logger.info(f"      ✅ Рынок {market_id} имеет активную позицию - пропускаем проверку времени")
             return True, "Рынок с активной позицией"
         
         # Инициализируем кэш, если его нет
@@ -97,15 +111,16 @@ class MarketFilter:
         
         # Если рынок уже известен - пропускаем
         if market_id in self.known_markets:
+            logger.info(f"      ❌ Рынок был обнаружен ранее")
             return False, "Рынок был обнаружен ранее"
         
         # Новый рынок - добавляем в кэш
         self.known_markets.add(market_id)
         
         market_question = market_data.get('question', 'Неизвестный рынок')[:50]
-        logger.info(f"🆕 НОВЫЙ РЫНОК обнаружен: {market_question}...")
-        logger.info(f"   🆔 ID: {market_id}")
-        logger.info(f"   ⏰ Время обнаружения: {datetime.utcnow().strftime('%H:%M:%S')}")
+        logger.info(f"      🆕 НОВЫЙ РЫНОК обнаружен: {market_question}...")
+        logger.info(f"      🆔 ID: {market_id}")
+        logger.info(f"      ⏰ Время обнаружения: {datetime.utcnow().strftime('%H:%M:%S')}")
         
         return True, "Новый рынок обнаружен"
 
@@ -118,9 +133,11 @@ class MarketFilter:
         if market_id in self.processed_markets:
             return False, "Рынок уже обработан"
 
+        # Проверяем бинарность рынка
         if not self.is_binary_market(market_data):
             return False, "Не бинарный рынок"
 
+        # Проверяем ликвидность
         if not self.check_liquidity_requirement(market_data):
             return False, "Рынок неактивен или не принимает ордера"
 
@@ -200,36 +217,47 @@ class TradingEngine:
                 new_markets_found = 0
                 suitable_markets = 0
                 
-                for market in markets:
+                for i, market in enumerate(markets, 1):
                     # Получаем ID из правильных полей API
                     market_id = market.get("question_id") or market.get("condition_id") or market.get("market_slug")
                     market_question = market.get("question", "Неизвестный рынок")
                     
-                    logger.debug(f"🎯 Анализ рынка: {market_question[:100]}...")
+                    logger.info(f"🔍 АНАЛИЗ РЫНКА #{i}/{len(markets)}")
+                    logger.info(f"   📋 Вопрос: {market_question}")
+                    logger.info(f"   🆔 ID: {market_id}")
                     
+                    # Детальная информация о рынке
+                    logger.info(f"   📊 ДАННЫЕ РЫНКА:")
+                    logger.info(f"      🎮 Активен: {market.get('active', False)}")
+                    logger.info(f"      💱 Принимает ордера: {market.get('accepting_orders', False)}")
+                    logger.info(f"      🔒 Закрыт: {market.get('closed', False)}")
+                    logger.info(f"      📅 Создан: {market.get('created_at', 'N/A')}")
+                    logger.info(f"      ⏰ Окончание: {market.get('end_date_iso', 'N/A')}")
+                    logger.info(f"      💰 Минимальная ликвидность: {market.get('min_liquidity', 'N/A')}")
+                    logger.info(f"      🏷️  Категория: {market.get('category', 'N/A')}")
+                    
+                    # Детальная информация о токенах
+                    tokens = market.get('tokens', [])
+                    if tokens:
+                        logger.info(f"   🎯 ТОКЕНЫ ({len(tokens)}):")
+                        for j, token in enumerate(tokens, 1):
+                            if isinstance(token, dict):
+                                logger.info(f"      #{j} ID: {token.get('id', 'N/A')}")
+                                logger.info(f"         Название: {token.get('name', 'N/A')}")
+                                logger.info(f"         Исход: {token.get('outcome', 'N/A')}")
+                                logger.info(f"         Цена: {token.get('price', 'N/A')}")
+                                logger.info(f"         Объем: {token.get('volume', 'N/A')}")
+                                logger.info(f"         Ликвидность: {token.get('liquidity', 'N/A')}")
+                    else:
+                        logger.info(f"   ❌ Токены не найдены")
+                    
+                    # Анализ пригодности
                     should_trade, reason = self.market_filter.should_trade_market(market)
                     
                     if should_trade:
                         suitable_markets += 1
-                        logger.info(f"✅ ПОДХОДЯЩИЙ РЫНОК найден!")
-                        logger.info(f"   📋 Вопрос: {market_question}")
-                        logger.info(f"   🆔 ID: {market_id}")
-                        
-                        # Показываем реальную информацию о рынке
-                        logger.info(f"   🎮 Активен: {market.get('active', False)}")
-                        logger.info(f"   💱 Принимает ордера: {market.get('accepting_orders', False)}")
-                        logger.info(f"   🔒 Закрыт: {market.get('closed', False)}")
-                        
-                        # Показываем токены и их цены
-                        tokens = market.get('tokens', [])
-                        if tokens:
-                            for token in tokens:
-                                if isinstance(token, dict):
-                                    outcome = token.get('outcome', 'N/A')
-                                    price = token.get('price', 'N/A')
-                                    logger.info(f"   🎯 {outcome}: цена {price}")
-                        
-                        logger.info(f"   ✅ Причина: {reason}")
+                        logger.info(f"   ✅ ПОДХОДЯЩИЙ РЫНОК!")
+                        logger.info(f"   🎯 Причина: {reason}")
                         
                         if not self.is_trading_enabled:
                             logger.warning(f"   ⚠️  Торговля отключена (нет приватного ключа)")
@@ -241,7 +269,9 @@ class TradingEngine:
                         
                         new_markets_found += 1
                     else:
-                        logger.debug(f"   ❌ Пропущен: {reason}")
+                        logger.info(f"   ❌ НЕ ПОДХОДИТ: {reason}")
+                    
+                    logger.info(f"   {'='*50}")
                 
                 # Сводка по циклу
                 if new_markets_found > 0:

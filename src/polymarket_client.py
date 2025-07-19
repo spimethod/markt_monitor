@@ -325,6 +325,34 @@ class PolymarketClient:
                 markets = data.get('data', []) if isinstance(data, dict) else data
                 
                 logger.info(f"🎯 Gamma API вернул {len(markets)} новых рынков (≤{max_age_minutes} мин)")
+                
+                # Детальное логирование всех рынков
+                for i, market in enumerate(markets, 1):
+                    question = market.get('question', 'Неизвестный рынок')
+                    market_id = market.get('question_id') or market.get('condition_id') or market.get('market_slug')
+                    created_at = market.get('created_at', 'N/A')
+                    active = market.get('active', False)
+                    accepting_orders = market.get('accepting_orders', False)
+                    closed = market.get('closed', False)
+                    
+                    logger.info(f"📋 РЫНОК #{i}: {question[:80]}...")
+                    logger.info(f"   🆔 ID: {market_id}")
+                    logger.info(f"   📅 Создан: {created_at}")
+                    logger.info(f"   🎮 Активен: {active}")
+                    logger.info(f"   💱 Принимает ордера: {accepting_orders}")
+                    logger.info(f"   🔒 Закрыт: {closed}")
+                    
+                    # Информация о токенах
+                    tokens = market.get('tokens', [])
+                    if tokens:
+                        logger.info(f"   🎯 Токены ({len(tokens)}):")
+                        for j, token in enumerate(tokens, 1):
+                            if isinstance(token, dict):
+                                token_name = token.get('name', 'N/A')
+                                token_price = token.get('price', 'N/A')
+                                logger.info(f"      #{j} {token_name}: {token_price}")
+                    logger.info(f"   {'-'*40}")
+                
                 return markets
                 
             except Exception as e:
@@ -623,17 +651,23 @@ class PolymarketClient:
                 continue
                 
             try:
-                # Получаем список рынков для подписки на их asset_ids
-                markets = self.get_markets()
-                if not markets or len(markets) == 0:
-                    logger.warning("Нет доступных рынков для WebSocket подписки, используется HTTP polling")
-                    await self._http_polling_fallback()
-                    await asyncio.sleep(60)
-                    continue
+                # Получаем новые рынки для подписки на их asset_ids
+                new_markets = self.get_new_markets(max_age_minutes=60)  # Берем рынки за последний час
+                if not new_markets:
+                    # Если новых нет, берем все рынки как fallback
+                    markets = self.get_markets()
+                    if not markets or len(markets) == 0:
+                        logger.warning("Нет доступных рынков для WebSocket подписки, используется HTTP polling")
+                        await self._http_polling_fallback()
+                        await asyncio.sleep(60)
+                        continue
+                    logger.info(f"🔍 Fallback: извлечение asset_ids из {min(len(markets), 10)} всех рынков...")
+                else:
+                    markets = new_markets
+                    logger.info(f"🔍 Извлечение asset_ids из {min(len(markets), 10)} новых рынков...")
                 
                 # Извлекаем asset_ids из первых 10 рынков (чтобы не перегружать)
                 asset_ids = []
-                logger.info(f"🔍 Извлечение asset_ids из {min(len(markets), 10)} рынков...")
                 
                 for i, market in enumerate(markets[:10]):
                     market_question = market.get('question', 'Неизвестный рынок')[:50]
