@@ -169,7 +169,7 @@ class PolymarketClient:
             signature = self.sign_order(order)
             
             # Отправляем на CLOB API
-        order_data = {
+            order_data = {
                 **order,
                 "signature": signature,
                 "user_address": self.account.address
@@ -261,7 +261,7 @@ class PolymarketClient:
             if response and response.status_code == 200:
                 logger.info(f"✅ Ордер {order_id} успешно отменен")
                 return True
-                else:
+            else:
                 logger.error(f"❌ Ошибка отмены ордера {order_id}: {response.status_code if response else 'No response'}")
                 return False
                 
@@ -275,7 +275,7 @@ class PolymarketClient:
         """
         if not self.account:
             logger.error("Невозможно получить ордера: приватный ключ не установлен.")
-                return []
+            return []
             
         try:
             url = f"{self.clob_host}/orders"
@@ -289,7 +289,7 @@ class PolymarketClient:
                 orders = response.json()
                 logger.info(f"✅ Получено {len(orders)} активных ордеров")
                 return orders
-                    else:
+            else:
                 logger.error(f"❌ Ошибка получения ордеров: {response.status_code if response else 'No response'}")
                 return []
                 
@@ -333,12 +333,13 @@ class PolymarketClient:
             url = "https://clob.polymarket.com/markets"
             logger.info(f"🔗 [Fallback] Запрос рынков: {url}")
             response = self._make_request("GET", url)
-            if not response: return []
-                        data = response.json()
+            if not response: 
+                return []
+            data = response.json()
             markets = data if isinstance(data, list) else data.get('data', [])
             logger.info(f"📋 [Fallback] Получено {len(markets)} рынков.")
             return markets
-                    except Exception as e:
+        except Exception as e:
             logger.error(f"❌ [Fallback] Ошибка получения рынков: {e}")
             return []
             
