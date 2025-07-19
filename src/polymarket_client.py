@@ -9,7 +9,7 @@ import random
 import time
 import uuid
 from typing import Dict, Optional, Any, Tuple
-from datetime import datetime
+from datetime import datetime, timedelta
 
 import requests
 import websockets
@@ -290,7 +290,83 @@ class PolymarketClient:
             return []
 
     def get_markets(self) -> list:
-        """Получает список активных рынков"""
+        """Получает список всех рынков (для совместимости)"""
+        return self._fetch_all_markets()
+
+    def get_new_markets(self, max_age_minutes: int = 10) -> list:
+        """Получает только новые рынки через Gamma API"""
+        try:
+            now = datetime.utcnow()
+            start_min = (now - timedelta(minutes=max_age_minutes)).isoformat(timespec="seconds") + "Z"
+            
+            params = {
+                "active": True,
+                "closed": False,
+                "limit": 100,
+                "start_date_min": start_min
+            }
+            
+            url = "https://gamma-api.polymarket.com/markets"
+            logger.info(f"🔗 Запрос новых рынков через Gamma API: {url}")
+            logger.info(f"📅 Параметры: active=True, closed=False, start_date_min={start_min}")
+            
+            response = self._make_request("GET", url, params=params)
+            
+            if not response:
+                logger.warning("❌ Gamma API не вернул данные, используем fallback")
+                return self._get_new_markets_fallback(max_age_minutes)
+                
+            if response.status_code != 200:
+                logger.warning(f"❌ Gamma API вернул статус {response.status_code}, используем fallback")
+                return self._get_new_markets_fallback(max_age_minutes)
+            
+            try:
+                data = response.json()
+                markets = data.get('data', []) if isinstance(data, dict) else data
+                
+                logger.info(f"🎯 Gamma API вернул {len(markets)} новых рынков (≤{max_age_minutes} мин)")
+                return markets
+                
+            except Exception as e:
+                logger.error(f"❌ Ошибка парсинга Gamma API ответа: {e}")
+                return self._get_new_markets_fallback(max_age_minutes)
+                
+        except Exception as e:
+            logger.error(f"❌ Ошибка получения новых рынков через Gamma API: {e}")
+            return self._get_new_markets_fallback(max_age_minutes)
+
+    def _get_new_markets_fallback(self, max_age_minutes: int = 10) -> list:
+        """Fallback метод - получает все рынки и фильтрует локально"""
+        try:
+            all_markets = self._fetch_all_markets()
+            if not all_markets:
+                return []
+            
+            current_time = datetime.utcnow()
+            new_markets = []
+            
+            for market in all_markets:
+                if not isinstance(market, dict):
+                    continue
+                    
+                # Проверяем время создания рынка
+                market_age = self._get_market_age(market, current_time)
+                if market_age is None:
+                    continue
+                    
+                # Если рынок не старше max_age_minutes минут
+                if market_age <= max_age_minutes:
+                    new_markets.append(market)
+            
+            logger.info(f"🎯 Fallback: найдено {len(new_markets)} новых рынков (не старше {max_age_minutes} минут) из {len(all_markets)}")
+            return new_markets
+                
+        except Exception as e:
+            logger.error(f"❌ Ошибка fallback получения новых рынков: {e}")
+            return []
+
+    def _fetch_all_markets(self) -> list:
+        """Получает все рынки от Polymarket API"""
         try:
             url = "https://clob.polymarket.com/markets"
             logger.info(f"🔗 Запрос рынков: {url}")
@@ -302,107 +378,70 @@ class PolymarketClient:
                 return []
                 
             logger.info(f"✅ Получен ответ от Polymarket API")
-            logger.info(f"📊 Тип ответа: {type(response)}")
             logger.info(f"📊 Статус код: {response.status_code}")
             
             # Получаем JSON из Response объекта
             try:
                 data = response.json()
-                logger.info(f"📋 JSON данные получены, тип: {type(data)}")
             except Exception as e:
                 logger.error(f"❌ Ошибка парсинга JSON: {e}")
-                logger.info(f"📄 Содержимое ответа: {response.text[:500]}")
                 return []
             
             if isinstance(data, dict):
                 # Если ответ - словарь, ищем список в нем
                 if 'data' in data:
                     markets = data['data']
-                    logger.info(f"📋 Найдены рынки в data['data']: {len(markets)} штук")
                 elif 'markets' in data:
                     markets = data['markets']  
-                    logger.info(f"📋 Найдены рынки в data['markets']: {len(markets)} штук")
                 else:
                     logger.warning(f"⚠️  Неожиданная структура ответа: {list(data.keys())}")
-                    logger.info(f"📄 Структура JSON: {data}")
                     return []
             elif isinstance(data, list):
                 markets = data
-                logger.info(f"📋 Получен прямой список рынков: {len(markets)} штук")
             else:
                 logger.warning(f"❌ Неожиданный тип JSON данных: {type(data)}")
                 return []
             
-            # Логируем детали первых 3 рынков
-            for i, market in enumerate(markets[:3]):
-                if isinstance(market, dict):
-                    logger.info(f"🎯 Рынок #{i+1}:")
-                    logger.info(f"   📋 Вопрос: {market.get('question', 'N/A')}")
-                    
-                    # Используем правильные поля из API
-                    market_id = market.get('question_id') or market.get('condition_id') or market.get('market_slug', 'N/A')
-                    logger.info(f"   🆔 ID: {market_id}")
-                    
-                    # Polymarket API не возвращает прямые поля liquidity/volume в этом эндпоинте
-                    # Показываем другую полезную информацию
-                    logger.info(f"   🎮 Активен: {market.get('active', False)}")
-                    logger.info(f"   🔒 Закрыт: {market.get('closed', False)}")
-                    logger.info(f"   💱 Принимает ордера: {market.get('accepting_orders', False)}")
-                    
-                    # Считаем количество исходов из tokens
-                    tokens = market.get('tokens', [])
-                    outcomes = market.get('outcomes', [])
-                    total_outcomes = len(tokens) if tokens else len(outcomes)
-                    logger.info(f"   🎲 Исходы: {total_outcomes}")
-                    
-                    # Показываем детали токенов
-                    if tokens:
-                        for j, token in enumerate(tokens[:2]):  # Показываем первые 2
-                            if isinstance(token, dict):
-                                outcome_name = token.get('outcome', f'Исход {j+1}')
-                                price = token.get('price', 'N/A')
-                                logger.info(f"     🎯 {outcome_name}: цена {price}")
-                    
-                    # Время
-                    end_date = market.get('end_date_iso') or market.get('game_start_time', 'N/A')
-                    logger.info(f"   📅 Дата завершения: {end_date}")
-                    
-                    # ПОЛНАЯ СТРУКТУРА первого рынка для отладки
-                    if i == 0:
-                        logger.info(f"🔍 ПОЛНАЯ СТРУКТУРА РЫНКА #1:")
-                        for key, value in market.items():
-                            value_str = str(value)[:100] + "..." if len(str(value)) > 100 else str(value)
-                            logger.info(f"     {key}: {value_str}")
-                    
-                    # Детали исходов - оставляем для совместимости, но токены важнее
-                    outcomes = market.get('outcomes', [])
-                    for j, outcome in enumerate(outcomes):
-                        if isinstance(outcome, dict):
-                            logger.info(f"     Исход {j+1}: {outcome.get('name', 'N/A')} (asset_id: {outcome.get('asset_id', 'N/A')})")
-                else:
-                    logger.warning(f"⚠️  Рынок #{i+1} не является словарем: {type(market)}")
-            
-            # ПРИНУДИТЕЛЬНОЕ логирование структуры
-            if markets and len(markets) > 0:
-                first_market = markets[0]
-                if isinstance(first_market, dict):
-                    logger.info("=" * 50)
-                    logger.info("🔍 ДЕТАЛЬНАЯ СТРУКТУРА ПЕРВОГО РЫНКА:")
-                    logger.info(f"Тип: {type(first_market)}")
-                    logger.info(f"Количество ключей: {len(first_market.keys())}")
-                    logger.info("Все ключи:")
-                    for key in first_market.keys():
-                        value = first_market[key]
-                        value_str = str(value)[:100] + "..." if len(str(value)) > 100 else str(value)
-                        logger.info(f"  {key} = {value_str}")
-                    logger.info("=" * 50)
-            
-            logger.info(f"🎯 ИТОГО ПОЛУЧЕНО: {len(markets)} рынков от Polymarket")
+            logger.info(f"📋 Получено {len(markets)} рынков от Polymarket")
             return markets
                 
         except Exception as e:
             logger.error(f"❌ Ошибка получения рынков: {e}")
             return []
+
+    def _get_market_age(self, market: Dict, current_time: datetime) -> Optional[int]:
+        """Вычисляет возраст рынка в минутах"""
+        try:
+            # Пробуем разные поля для времени создания
+            creation_time = None
+            
+            # 1. Пробуем game_start_time
+            if market.get('game_start_time'):
+                creation_time = datetime.fromisoformat(market['game_start_time'].replace('Z', '+00:00'))
+            
+            # 2. Пробуем end_date_iso
+            elif market.get('end_date_iso'):
+                creation_time = datetime.fromisoformat(market['end_date_iso'].replace('Z', '+00:00'))
+            
+            # 3. Пробуем accepting_order_timestamp
+            elif market.get('accepting_order_timestamp'):
+                creation_time = datetime.fromisoformat(market['accepting_order_timestamp'].replace('Z', '+00:00'))
+            
+            # 4. Если нет времени создания, используем текущее время как fallback
+            else:
+                # Для рынков без времени создания считаем их новыми
+                return 0
+            
+            if creation_time:
+                # Вычисляем разницу в минутах
+                time_diff = current_time.replace(tzinfo=creation_time.tzinfo) - creation_time
+                return int(time_diff.total_seconds() / 60)
+            
+            return None
+            
+        except Exception as e:
+            logger.debug(f"Ошибка вычисления возраста рынка: {e}")
+            return None
 
     def get_current_price(self, token_id: str) -> Optional[float]:
         """Получение текущей цены токена"""

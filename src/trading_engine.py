@@ -78,7 +78,7 @@ class MarketFilter:
             return False
 
     def check_time_window(self, market_data: Dict) -> Tuple[bool, str]:
-        """Проверяет, что рынок недавно обнаружен (в рамках 10-минутного окна) или имеет активные позиции"""
+        """Проверяет, что рынок недавно обнаружен или имеет активные позиции"""
         
         # Получаем ID рынка
         market_id = market_data.get("question_id") or market_data.get("condition_id") or market_data.get("market_slug")
@@ -93,38 +93,19 @@ class MarketFilter:
         # Инициализируем кэш, если его нет
         if not hasattr(self, 'known_markets'):
             self.known_markets = set()
-            self.new_markets_timestamps = {}
             logger.info("Инициализирован кэш рынков для отслеживания новых")
         
-        current_time = datetime.utcnow()
-        
-        # Если рынок уже известен, проверяем, не старше ли он TIME_WINDOW_MINUTES
+        # Если рынок уже известен - пропускаем
         if market_id in self.known_markets:
-            # Проверяем, есть ли он в списке недавно добавленных
-            if market_id in self.new_markets_timestamps:
-                discovery_time = self.new_markets_timestamps[market_id]
-                time_diff = current_time - discovery_time
-                
-                if time_diff.total_seconds() <= (config.trading.TIME_WINDOW_MINUTES * 60):
-                    logger.debug(f"✅ Рынок обнаружен {time_diff.total_seconds():.0f}s назад, в пределах окна")
-                    return True, f"Недавно обнаружен ({time_diff.total_seconds():.0f}s назад)"
-                else:
-                    # Рынок устарел, удаляем из кэша новых
-                    del self.new_markets_timestamps[market_id]
-                    logger.debug(f"❌ Рынок устарел ({time_diff.total_seconds():.0f}s > {config.trading.TIME_WINDOW_MINUTES * 60}s)")
-                    return False, f"Рынок устарел ({time_diff.total_seconds():.0f}s)"
-            else:
-                # Рынок известен, но не в новых - значит старый
-                return False, "Рынок был обнаружен ранее"
+            return False, "Рынок был обнаружен ранее"
         
         # Новый рынок - добавляем в кэш
         self.known_markets.add(market_id)
-        self.new_markets_timestamps[market_id] = current_time
         
         market_question = market_data.get('question', 'Неизвестный рынок')[:50]
         logger.info(f"🆕 НОВЫЙ РЫНОК обнаружен: {market_question}...")
         logger.info(f"   🆔 ID: {market_id}")
-        logger.info(f"   ⏰ Время обнаружения: {current_time.strftime('%H:%M:%S')}")
+        logger.info(f"   ⏰ Время обнаружения: {datetime.utcnow().strftime('%H:%M:%S')}")
         
         return True, "Новый рынок обнаружен"
 
@@ -200,15 +181,21 @@ class TradingEngine:
                 self.market_filter.cleanup_old_markets()
                 
                 logger.info("🔍 Поиск новых рынков...")
-                markets = self.client.get_markets()
+                # Получаем только новые рынки (не старше 10 минут)
+                markets = self.client.get_new_markets(max_age_minutes=10)
                 
                 # Проверяем, что получили список
                 if not isinstance(markets, list):
-                    logger.warning(f"get_markets() вернул не список: {type(markets)}")
+                    logger.warning(f"get_new_markets() вернул не список: {type(markets)}")
                     await asyncio.sleep(60)
                     continue
                 
-                logger.info(f"📊 Получено {len(markets)} рынков для анализа")
+                if not markets:
+                    logger.info("📊 Новых рынков не найдено (все старше 10 минут)")
+                    await asyncio.sleep(60)
+                    continue
+                
+                logger.info(f"📊 Получено {len(markets)} новых рынков для анализа")
                 
                 new_markets_found = 0
                 suitable_markets = 0
