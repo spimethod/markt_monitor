@@ -150,16 +150,19 @@ class DatabaseManager:
         """Сохранение позиции в базу данных"""
         session = await self._get_session()
         if not session:
+            logger.error("Не удалось получить сессию БД для сохранения позиции")
             return False
         async with session:
             try:
+                logger.info(f"Сохранение позиции в БД: {position_data.get('id')} - {position_data.get('market_name', 'N/A')}")
                 position = Position(**position_data)
                 session.add(position)
                 await session.commit()
-                logger.info(f"Позиция {position_data.get('id')} сохранена в БД")
+                logger.info(f"✅ Позиция {position_data.get('id')} успешно сохранена в БД")
                 return True
             except Exception as e:
-                logger.error(f"Ошибка сохранения позиции: {e}")
+                logger.error(f"❌ Ошибка сохранения позиции {position_data.get('id')}: {e}")
+                await session.rollback()
                 return False
 
     async def get_open_positions(self) -> List[Dict[str, Any]]:
@@ -193,17 +196,21 @@ class DatabaseManager:
         """Закрытие позиции в базе данных"""
         session = await self._get_session()
         if not session:
+            logger.error("Не удалось получить сессию БД для закрытия позиции")
             return False
         async with session:
             try:
+                logger.info(f"Закрытие позиции в БД: {position_id} - {close_reason}")
                 values = {"status": "closed", "close_reason": close_reason, "closed_at": datetime.utcnow(), "updated_at": datetime.utcnow()}
                 if realized_pnl is not None:
                     values["realized_pnl"] = realized_pnl
                 await session.execute(update(Position).where(Position.id == position_id).values(**values))
                 await session.commit()
+                logger.info(f"✅ Позиция {position_id} успешно закрыта в БД")
                 return True
             except Exception as e:
-                logger.error(f"Ошибка закрытия позиции: {e}")
+                logger.error(f"❌ Ошибка закрытия позиции {position_id}: {e}")
+                await session.rollback()
                 return False
 
     async def get_position_by_id(self, position_id: str) -> Optional[Dict[str, Any]]:
