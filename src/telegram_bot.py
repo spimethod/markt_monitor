@@ -22,10 +22,22 @@ from src.config.settings import config
 logger = logging.getLogger(__name__)
 
 # Константы для логов
-LOG_PATH = pathlib.Path("logs/bot.log")
+LOG_PATHS = [
+    pathlib.Path("logs/bot.log"),
+    pathlib.Path("/app/logs/bot.log"),  # Railway
+    pathlib.Path("./logs/bot.log"),
+    pathlib.Path("../logs/bot.log"),
+]
 TAIL_LINES = 30  # количество строк для отправки
 MAX_MESSAGE_LENGTH = 4000  # максимальная длина сообщения в Telegram
 
+
+def find_log_file() -> pathlib.Path:
+    """Находит файл логов среди возможных путей"""
+    for log_path in LOG_PATHS:
+        if log_path.exists():
+            return log_path
+    return LOG_PATHS[0]  # Возвращаем первый путь как fallback
 
 def tail_log(path: pathlib.Path, n: int) -> str:
     """Читает последние n строк из файла лога"""
@@ -325,9 +337,20 @@ class TelegramNotifier:
     def _get_logs_content(self) -> str:
         """Получение содержимого логов"""
         try:
-            content = tail_log(LOG_PATH, TAIL_LINES)
+            log_path = find_log_file()
+            
+            # Проверяем существование файла
+            if not log_path.exists():
+                return f"Файл логов не найден: {log_path.absolute()}"
+            
+            # Проверяем размер файла
+            file_size = log_path.stat().st_size
+            if file_size == 0:
+                return "Файл логов пуст"
+            
+            content = tail_log(log_path, TAIL_LINES)
             if not content or content.strip() == "":
-                return "Лог пуст или недоступен"
+                return f"Лог пуст или недоступен. Размер файла: {file_size} байт"
             
             # Экранируем HTML символы
             escaped_content = escape_html(content)
@@ -338,7 +361,8 @@ class TelegramNotifier:
             
             return escaped_content
         except Exception as e:
-            return f"Ошибка чтения логов: {e}"
+            log_path = find_log_file()
+            return f"Ошибка чтения логов: {e}\nПуть: {log_path.absolute()}"
 
     # ===== ОБРАБОТЧИКИ КОМАНД =====
 
@@ -560,22 +584,38 @@ class TelegramNotifier:
         if not update.message:
             return
 
-        content = self._get_logs_content()
-        text = f"""
+        try:
+            logger.info("Команда /logs выполнена")
+            content = self._get_logs_content()
+            logger.info(f"Получено содержимое логов длиной: {len(content)} символов")
+            
+            text = f"""
 📝 <b>Последние {TAIL_LINES} строк журнала</b>
 
 <code>{content}</code>
 
 ⏰ <i>Обновлено: {datetime.utcnow().strftime('%H:%M:%S')} UTC</i>
-        """
+            """
 
-        keyboard = [
-            [InlineKeyboardButton("🔄 Обновить", callback_data="logs")],
-            [InlineKeyboardButton("📊 Статус", callback_data="status")],
-        ]
-        reply_markup = InlineKeyboardMarkup(keyboard)
+            keyboard = [
+                [InlineKeyboardButton("🔄 Обновить", callback_data="logs")],
+                [InlineKeyboardButton("📊 Статус", callback_data="status")],
+            ]
+            reply_markup = InlineKeyboardMarkup(keyboard)
 
-        await update.message.reply_text(text, parse_mode=ParseMode.HTML, reply_markup=reply_markup)
+            await update.message.reply_text(text, parse_mode=ParseMode.HTML, reply_markup=reply_markup)
+            logger.info("Команда /logs успешно выполнена")
+            
+        except Exception as e:
+            logger.error(f"Ошибка в команде /logs: {e}")
+            error_text = f"""
+❌ <b>Ошибка получения логов</b>
+
+📝 <b>Описание:</b> {str(e)}
+
+⏰ <i>{datetime.utcnow().strftime('%H:%M:%S')} UTC</i>
+            """
+            await update.message.reply_text(error_text, parse_mode=ParseMode.HTML)
 
     async def _cmd_help(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Команда /help"""
@@ -790,22 +830,38 @@ class TelegramNotifier:
 
     async def _handle_logs_callback(self, query: CallbackQuery):
         """Обработка callback для логов"""
-        content = self._get_logs_content()
-        text = f"""
+        try:
+            logger.info("Callback /logs выполнена")
+            content = self._get_logs_content()
+            logger.info(f"Получено содержимое логов длиной: {len(content)} символов")
+            
+            text = f"""
 📝 <b>Последние {TAIL_LINES} строк журнала</b>
 
 <code>{content}</code>
 
 ⏰ <i>Обновлено: {datetime.utcnow().strftime('%H:%M:%S')} UTC</i>
-        """
+            """
 
-        keyboard = [
-            [InlineKeyboardButton("🔄 Обновить", callback_data="logs")],
-            [InlineKeyboardButton("📊 Статус", callback_data="status")],
-        ]
-        reply_markup = InlineKeyboardMarkup(keyboard)
+            keyboard = [
+                [InlineKeyboardButton("🔄 Обновить", callback_data="logs")],
+                [InlineKeyboardButton("📊 Статус", callback_data="status")],
+            ]
+            reply_markup = InlineKeyboardMarkup(keyboard)
 
-        await query.edit_message_text(text, parse_mode=ParseMode.HTML, reply_markup=reply_markup)
+            await query.edit_message_text(text, parse_mode=ParseMode.HTML, reply_markup=reply_markup)
+            logger.info("Callback /logs успешно выполнена")
+            
+        except Exception as e:
+            logger.error(f"Ошибка в callback /logs: {e}")
+            error_text = f"""
+❌ <b>Ошибка получения логов</b>
+
+📝 <b>Описание:</b> {str(e)}
+
+⏰ <i>{datetime.utcnow().strftime('%H:%M:%S')} UTC</i>
+            """
+            await query.edit_message_text(error_text, parse_mode=ParseMode.HTML)
 
 
 # Глобальный экземпляр
