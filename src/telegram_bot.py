@@ -413,12 +413,12 @@ class TelegramNotifier:
         # Получаем статус базы данных
         db_status_text = ""
         try:
-        if self.trading_engine and hasattr(self.trading_engine, "client") and hasattr(self.trading_engine.client, "db_manager"):
-            db_status = self.trading_engine.client.db_manager.get_database_status()
-            db_emoji = "🗄️" if db_status["engine_type"] == "PostgreSQL" else "📁" if db_status["engine_type"] == "SQLite" else "❌"
-            db_status_text = f"\n{db_emoji} <b>База данных:</b> {db_status['engine_type']}"
-            if db_status.get("using_sqlite_fallback"):
-                db_status_text += " (fallback)"
+            if self.trading_engine and hasattr(self.trading_engine, "client") and hasattr(self.trading_engine.client, "db_manager"):
+                db_status = self.trading_engine.client.db_manager.get_database_status()
+                db_emoji = "🗄️" if db_status["engine_type"] == "PostgreSQL" else "📁" if db_status["engine_type"] == "SQLite" else "❌"
+                db_status_text = f"\n{db_emoji} <b>База данных:</b> {db_status['engine_type']}"
+                if db_status.get("using_sqlite_fallback"):
+                    db_status_text += " (fallback)"
         except Exception as db_e:
             logger.warning(f"Ошибка получения статуса БД: {db_e}")
             db_status_text = "\n❓ <b>База данных:</b> Недоступна"
