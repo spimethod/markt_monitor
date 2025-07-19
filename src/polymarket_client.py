@@ -315,6 +315,19 @@ class PolymarketClient:
             if not all_markets:
                 return []
             
+            # ---- NEW LOGIC: первая инициализация кэша не считается "новыми" рынками ----
+            if not getattr(self, 'initial_market_cache_done', False):
+                # Заполняем кэш и выходим без возврата рынков
+                for market in all_markets:
+                    if isinstance(market, dict):
+                        market_id = market.get('condition_id') or market.get('question_id') or market.get('market_slug')
+                        if market_id:
+                            self.market_discovery_times[market_id] = current_time
+                self.initial_market_cache_done = True
+                logger.info("🗄️  Первичная загрузка рынков завершена — новые рынки будут отслеживаться со следующего цикла")
+                return []
+            # --------------------------------------------------------------------------
+            
             new_markets = []
             
             for market in all_markets:
