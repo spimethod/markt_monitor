@@ -54,7 +54,7 @@ def tail_log(path: pathlib.Path, n: int) -> str:
             last_lines = lines[-n:] if len(lines) > n else lines
             return "".join(last_lines)
     except Exception as e:
-        return f"Ошибка чтения логов: {e}"
+            return f"Ошибка чтения логов: {e}"
 
 
 def escape_html(text: str) -> str:
@@ -300,7 +300,7 @@ class TelegramNotifier:
     async def _get_current_stats(self) -> Dict:
         """Получение текущей статистики"""
         if self.trading_engine:
-            return {
+        return {
                 "is_trading_enabled": self.trading_engine.is_trading_enabled,
                 "total_trades": self.trading_engine.stats.get("total_trades", 0),
                 "successful_trades": self.trading_engine.stats.get("successful_trades", 0),
@@ -320,7 +320,7 @@ class TelegramNotifier:
     def _get_open_positions(self) -> List[Dict]:
         """Получение открытых позиций"""
         if self.trading_engine and hasattr(self.trading_engine, "client"):
-            return [
+        return [
                 p
                 for p in self.trading_engine.client.active_positions.values()
                 if p["status"] == "open"
@@ -334,10 +334,10 @@ class TelegramNotifier:
         if isinstance(timestamp, str):
             try:
                 dt = datetime.fromisoformat(timestamp.replace("Z", "+00:00"))
-                return dt.strftime("%Y-%m-%d %H:%M")
+            return dt.strftime("%Y-%m-%d %H:%M")
             except (ValueError, AttributeError):
                 return timestamp[:16] if len(timestamp) > 16 else timestamp
-        return "N/A"
+            return "N/A"
 
     def _get_logs_content(self) -> str:
         """Получение содержимого логов"""
@@ -457,13 +457,13 @@ class TelegramNotifier:
 
         if not open_positions:
             text = f"📋 <b>Открытых позиций нет</b>\n\n⏰ <i>Проверено: {datetime.utcnow().strftime('%H:%M:%S')}</i>"
-            keyboard = [
+        keyboard = [
                 [InlineKeyboardButton("🔄 Обновить", callback_data="positions")],
                 [InlineKeyboardButton("📊 Статус", callback_data="status")],
             ]
-            reply_markup = InlineKeyboardMarkup(keyboard)
+        reply_markup = InlineKeyboardMarkup(keyboard)
 
-            await update.message.reply_text(
+        await update.message.reply_text(
                 text, parse_mode=ParseMode.HTML, reply_markup=reply_markup
             )
             return
@@ -594,7 +594,7 @@ class TelegramNotifier:
             content = self._get_logs_content()
             logger.info(f"Получено содержимое логов длиной: {len(content)} символов")
             
-            text = f"""
+        text = f"""
 📝 <b>Последние {TAIL_LINES} строк журнала</b>
 
 <code>{content}</code>
@@ -602,13 +602,13 @@ class TelegramNotifier:
 ⏰ <i>Обновлено: {datetime.utcnow().strftime('%H:%M:%S')} UTC</i>
             """
 
-            keyboard = [
+        keyboard = [
                 [InlineKeyboardButton("🔄 Обновить", callback_data="logs")],
                 [InlineKeyboardButton("📊 Статус", callback_data="status")],
             ]
-            reply_markup = InlineKeyboardMarkup(keyboard)
+        reply_markup = InlineKeyboardMarkup(keyboard)
 
-            await update.message.reply_text(text, parse_mode=ParseMode.HTML, reply_markup=reply_markup)
+        await update.message.reply_text(text, parse_mode=ParseMode.HTML, reply_markup=reply_markup)
             logger.info("Команда /logs успешно выполнена")
             
         except Exception as e:
@@ -620,7 +620,7 @@ class TelegramNotifier:
 
 ⏰ <i>{datetime.utcnow().strftime('%H:%M:%S')} UTC</i>
         """
-            await update.message.reply_text(error_text, parse_mode=ParseMode.HTML)
+        await update.message.reply_text(error_text, parse_mode=ParseMode.HTML)
 
     async def _cmd_help(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Команда /help"""
@@ -656,7 +656,7 @@ class TelegramNotifier:
         """Обработка callback queries от inline кнопок"""
         query = update.callback_query
         if not query:
-                return
+            return
 
         await query.answer()
 
@@ -677,8 +677,8 @@ class TelegramNotifier:
         """Обработка callback для статуса"""
         stats = await self._get_current_stats()
 
-            # Получаем статус базы данных
-            db_status_text = ""
+        # Получаем статус базы данных
+        db_status_text = ""
             try:
                 if self.trading_engine and hasattr(self.trading_engine, "client") and hasattr(self.trading_engine.client, "db_manager"):
                     db_status = self.trading_engine.client.db_manager.get_database_status()
@@ -690,7 +690,7 @@ class TelegramNotifier:
                 logger.warning(f"Ошибка получения статуса БД: {db_e}")
                 db_status_text = "\n❓ <b>База данных:</b> Недоступна"
 
-            text = f"""
+        text = f"""
 📊 <b>Статус бота</b>
 
 🤖 <b>Состояние:</b> {self.bot_status}
@@ -705,13 +705,13 @@ class TelegramNotifier:
 ⏰ <i>Последнее обновление: {datetime.utcnow().strftime('%H:%M:%S')} UTC</i>
             """
 
-            keyboard = [
+        keyboard = [
                 [InlineKeyboardButton("🔄 Обновить", callback_data="status")],
                 [InlineKeyboardButton("📋 Позиции", callback_data="positions")],
             ]
-            reply_markup = InlineKeyboardMarkup(keyboard)
+        reply_markup = InlineKeyboardMarkup(keyboard)
 
-            await query.edit_message_text(
+        await query.edit_message_text(
                 text, parse_mode=ParseMode.HTML, reply_markup=reply_markup
             )
 
@@ -721,13 +721,13 @@ class TelegramNotifier:
 
         if not open_positions:
             text = f"📋 <b>Открытых позиций нет</b>\n\n⏰ <i>Проверено: {datetime.utcnow().strftime('%H:%M:%S')}</i>"
-            keyboard = [
+        keyboard = [
                 [InlineKeyboardButton("🔄 Обновить", callback_data="positions")],
                 [InlineKeyboardButton("📊 Статус", callback_data="status")],
             ]
-            reply_markup = InlineKeyboardMarkup(keyboard)
+        reply_markup = InlineKeyboardMarkup(keyboard)
 
-            await query.edit_message_text(
+        await query.edit_message_text(
                 text, parse_mode=ParseMode.HTML, reply_markup=reply_markup
             )
             return
@@ -846,7 +846,7 @@ class TelegramNotifier:
             content = self._get_logs_content()
             logger.info(f"Получено содержимое логов длиной: {len(content)} символов")
             
-            text = f"""
+        text = f"""
 📝 <b>Последние {TAIL_LINES} строк журнала</b>
 
 <code>{content}</code>
@@ -854,13 +854,13 @@ class TelegramNotifier:
 ⏰ <i>Обновлено: {datetime.utcnow().strftime('%H:%M:%S')} UTC</i>
             """
 
-            keyboard = [
+        keyboard = [
                 [InlineKeyboardButton("🔄 Обновить", callback_data="logs")],
                 [InlineKeyboardButton("📊 Статус", callback_data="status")],
             ]
-            reply_markup = InlineKeyboardMarkup(keyboard)
+        reply_markup = InlineKeyboardMarkup(keyboard)
 
-            await query.edit_message_text(text, parse_mode=ParseMode.HTML, reply_markup=reply_markup)
+        await query.edit_message_text(text, parse_mode=ParseMode.HTML, reply_markup=reply_markup)
             logger.info("Callback /logs успешно выполнена")
             
         except Exception as e:
@@ -872,7 +872,7 @@ class TelegramNotifier:
 
 ⏰ <i>{datetime.utcnow().strftime('%H:%M:%S')} UTC</i>
             """
-            await query.edit_message_text(error_text, parse_mode=ParseMode.HTML)
+        await query.edit_message_text(error_text, parse_mode=ParseMode.HTML)
 
     async def _cmd_orders(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Обработчик команды /orders - показывает активные ордера"""
@@ -882,13 +882,13 @@ class TelegramNotifier:
         try:
             if not self.trading_engine or not self.trading_engine.client:
                 await update.message.reply_text("❌ Торговый движок недоступен")
-                return
+            return
 
             orders = await self.trading_engine.client.get_my_orders()
             
             if not orders:
                 await update.message.reply_text("📋 Нет активных ордеров")
-                return
+            return
 
             text = f"📋 <b>Активные ордера ({len(orders)}):</b>\n\n"
             
@@ -901,11 +901,11 @@ class TelegramNotifier:
                 text += f"   💰 Цена: ${order.get('price', 0):.4f}\n"
                 text += f"   📅 Истекает: {self._format_timestamp(order.get('expires'))}\n\n"
 
-            await update.message.reply_text(text, parse_mode=ParseMode.HTML)
+        await update.message.reply_text(text, parse_mode=ParseMode.HTML)
             
         except Exception as e:
             logger.error(f"Ошибка получения ордеров: {e}")
-            await update.message.reply_text(f"❌ Ошибка получения ордеров: {str(e)}")
+        await update.message.reply_text(f"❌ Ошибка получения ордеров: {str(e)}")
 
     async def _cmd_cancel_order(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Обработчик команды /cancel [order_id] - отменяет ордер"""
@@ -915,13 +915,13 @@ class TelegramNotifier:
         try:
             if not context.args or len(context.args) == 0:
                 await update.message.reply_text("❌ Укажите ID ордера: /cancel [order_id]")
-                return
+            return
 
             order_id = context.args[0]
             
             if not self.trading_engine or not self.trading_engine.client:
                 await update.message.reply_text("❌ Торговый движок недоступен")
-                return
+            return
 
             success = await self.trading_engine.client.cancel_order(order_id)
             
@@ -932,7 +932,7 @@ class TelegramNotifier:
                 
         except Exception as e:
             logger.error(f"Ошибка отмены ордера: {e}")
-            await update.message.reply_text(f"❌ Ошибка отмены ордера: {str(e)}")
+        await update.message.reply_text(f"❌ Ошибка отмены ордера: {str(e)}")
 
     async def _cmd_trade(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Обработчик команды /trade [market_id] [side] [size] [price] - ручная торговля"""
@@ -945,7 +945,7 @@ class TelegramNotifier:
                     "❌ Недостаточно параметров: /trade [market_id] [side] [size] [price]\n"
                     "Пример: /trade 123 BUY 100 0.5"
                 )
-                return
+            return
 
             market_id, side, size_str, price_str = context.args[:4]
             
@@ -954,15 +954,15 @@ class TelegramNotifier:
                 price = float(price_str)
             except ValueError:
                 await update.message.reply_text("❌ Размер и цена должны быть числами")
-                return
+            return
 
             if side.upper() not in ["BUY", "SELL"]:
                 await update.message.reply_text("❌ Сторона должна быть BUY или SELL")
-                return
+            return
 
             if not self.trading_engine or not self.trading_engine.client:
                 await update.message.reply_text("❌ Торговый движок недоступен")
-                return
+            return
 
             # Получаем данные рынка
             markets = self.trading_engine.client.get_markets()
@@ -977,7 +977,7 @@ class TelegramNotifier:
 
             if not market_data:
                 await update.message.reply_text(f"❌ Рынок {market_id} не найден")
-                return
+            return
 
             # Получаем token_id для нужной стороны
             token_id = None
@@ -991,7 +991,7 @@ class TelegramNotifier:
 
             if not token_id:
                 await update.message.reply_text(f"❌ Не удалось найти токен для {side}")
-                return
+            return
 
             # Размещаем ордер
             order_result = await self.trading_engine.client.place_order(
@@ -1009,7 +1009,7 @@ class TelegramNotifier:
                 
         except Exception as e:
             logger.error(f"Ошибка ручной торговли: {e}")
-            await update.message.reply_text(f"❌ Ошибка торговли: {str(e)}")
+        await update.message.reply_text(f"❌ Ошибка торговли: {str(e)}")
 
 
 # Глобальный экземпляр
