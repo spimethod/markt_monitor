@@ -48,11 +48,11 @@ def tail_log(path: pathlib.Path, n: int) -> str:
         with path.open("r", encoding="utf-8") as f:
             lines = f.readlines()
             if not lines:
-            return "Лог пуст"
+                return "Лог пуст"
             
             # Берем последние n строк
             last_lines = lines[-n:] if len(lines) > n else lines
-        return "".join(last_lines)
+            return "".join(last_lines)
     except Exception as e:
         return f"Ошибка чтения логов: {e}"
 
@@ -178,7 +178,7 @@ class TelegramNotifier:
         ]
         reply_markup = InlineKeyboardMarkup(keyboard)
 
-            await self.send_message(text, reply_markup=reply_markup)
+        await self.send_message(text, reply_markup=reply_markup)
 
     async def send_new_market_notification(self, market_data: Dict):
         """Уведомление о новом рынке"""
@@ -244,7 +244,7 @@ class TelegramNotifier:
         ]
         reply_markup = InlineKeyboardMarkup(keyboard)
 
-            await self.send_message(text, reply_markup=reply_markup)
+        await self.send_message(text, reply_markup=reply_markup)
 
     async def send_error_notification(self, error_msg: str):
         """Уведомление об ошибке"""
@@ -265,7 +265,7 @@ class TelegramNotifier:
         ]
         reply_markup = InlineKeyboardMarkup(keyboard)
 
-            await self.send_message(text, reply_markup=reply_markup)
+        await self.send_message(text, reply_markup=reply_markup)
 
     async def send_websocket_fallback_notification(self):
         """Уведомление о переходе на HTTP polling"""
@@ -308,7 +308,7 @@ class TelegramNotifier:
                 "open_positions": len(self._get_open_positions()),
                 "daily_trades": self.trading_engine.stats.get("daily_trades", 0),
             }
-            return {
+        return {
             "is_trading_enabled": False,
             "total_trades": 0,
             "successful_trades": 0,
@@ -325,7 +325,7 @@ class TelegramNotifier:
                 for p in self.trading_engine.client.active_positions.values()
                 if p["status"] == "open"
             ]
-            return []
+        return []
 
     def _format_timestamp(self, timestamp: Union[datetime, str, None]) -> str:
         """Безопасное форматирование timestamp"""
@@ -334,10 +334,10 @@ class TelegramNotifier:
         if isinstance(timestamp, str):
             try:
                 dt = datetime.fromisoformat(timestamp.replace("Z", "+00:00"))
-            return dt.strftime("%Y-%m-%d %H:%M")
+                return dt.strftime("%Y-%m-%d %H:%M")
             except (ValueError, AttributeError):
-            return timestamp[:16] if len(timestamp) > 16 else timestamp
-            return "N/A"
+                return timestamp[:16] if len(timestamp) > 16 else timestamp
+        return "N/A"
 
     def _get_logs_content(self) -> str:
         """Получение содержимого логов"""
@@ -346,16 +346,16 @@ class TelegramNotifier:
             
             # Проверяем существование файла
             if not log_path.exists():
-            return f"Файл логов не найден: {log_path.absolute()}"
+                return f"Файл логов не найден: {log_path.absolute()}"
             
             # Проверяем размер файла
             file_size = log_path.stat().st_size
             if file_size == 0:
-            return "Файл логов пуст"
+                return "Файл логов пуст"
             
             content = tail_log(log_path, TAIL_LINES)
             if not content or content.strip() == "":
-            return f"Лог пуст или недоступен. Размер файла: {file_size} байт"
+                return f"Лог пуст или недоступен. Размер файла: {file_size} байт"
             
             # Экранируем HTML символы
             escaped_content = escape_html(content)
@@ -399,7 +399,7 @@ class TelegramNotifier:
         ]
         reply_markup = InlineKeyboardMarkup(keyboard)
 
-            await update.message.reply_text(
+        await update.message.reply_text(
             text, parse_mode=ParseMode.HTML, reply_markup=reply_markup
         )
 
@@ -444,7 +444,7 @@ class TelegramNotifier:
         ]
         reply_markup = InlineKeyboardMarkup(keyboard)
 
-            await update.message.reply_text(
+        await update.message.reply_text(
             text, parse_mode=ParseMode.HTML, reply_markup=reply_markup
         )
 
@@ -457,11 +457,11 @@ class TelegramNotifier:
 
         if not open_positions:
             text = f"📋 <b>Открытых позиций нет</b>\n\n⏰ <i>Проверено: {datetime.utcnow().strftime('%H:%M:%S')}</i>"
-        keyboard = [
+            keyboard = [
                 [InlineKeyboardButton("🔄 Обновить", callback_data="positions")],
                 [InlineKeyboardButton("📊 Статус", callback_data="status")],
             ]
-        reply_markup = InlineKeyboardMarkup(keyboard)
+            reply_markup = InlineKeyboardMarkup(keyboard)
 
             await update.message.reply_text(
                 text, parse_mode=ParseMode.HTML, reply_markup=reply_markup
@@ -493,7 +493,7 @@ class TelegramNotifier:
         ]
         reply_markup = InlineKeyboardMarkup(keyboard)
 
-            await update.message.reply_text(
+        await update.message.reply_text(
             text, parse_mode=ParseMode.HTML, reply_markup=reply_markup
         )
 
@@ -522,7 +522,7 @@ class TelegramNotifier:
         ]
         reply_markup = InlineKeyboardMarkup(keyboard)
 
-            await update.message.reply_text(
+        await update.message.reply_text(
             text, parse_mode=ParseMode.HTML, reply_markup=reply_markup
         )
 
@@ -551,7 +551,7 @@ class TelegramNotifier:
         ]
         reply_markup = InlineKeyboardMarkup(keyboard)
 
-            await update.message.reply_text(
+        await update.message.reply_text(
             text, parse_mode=ParseMode.HTML, reply_markup=reply_markup
         )
 
@@ -582,7 +582,7 @@ class TelegramNotifier:
 💬 <i>Для изменения параметров обновите переменные окружения в Railway</i>
         """
 
-            await update.message.reply_text(text, parse_mode=ParseMode.HTML)
+        await update.message.reply_text(text, parse_mode=ParseMode.HTML)
 
     async def _cmd_logs(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Команда /logs"""
@@ -594,7 +594,7 @@ class TelegramNotifier:
             content = self._get_logs_content()
             logger.info(f"Получено содержимое логов длиной: {len(content)} символов")
             
-        text = f"""
+            text = f"""
 📝 <b>Последние {TAIL_LINES} строк журнала</b>
 
 <code>{content}</code>
@@ -602,11 +602,11 @@ class TelegramNotifier:
 ⏰ <i>Обновлено: {datetime.utcnow().strftime('%H:%M:%S')} UTC</i>
             """
 
-        keyboard = [
+            keyboard = [
                 [InlineKeyboardButton("🔄 Обновить", callback_data="logs")],
                 [InlineKeyboardButton("📊 Статус", callback_data="status")],
             ]
-        reply_markup = InlineKeyboardMarkup(keyboard)
+            reply_markup = InlineKeyboardMarkup(keyboard)
 
             await update.message.reply_text(text, parse_mode=ParseMode.HTML, reply_markup=reply_markup)
             logger.info("Команда /logs успешно выполнена")
@@ -619,7 +619,7 @@ class TelegramNotifier:
 📝 <b>Описание:</b> {str(e)}
 
 ⏰ <i>{datetime.utcnow().strftime('%H:%M:%S')} UTC</i>
-        """
+            """
             await update.message.reply_text(error_text, parse_mode=ParseMode.HTML)
 
     async def _cmd_help(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -648,7 +648,7 @@ class TelegramNotifier:
 💡 <i>Все команды доступны через меню или inline-кнопки</i>
         """
 
-            await update.message.reply_text(text, parse_mode=ParseMode.HTML)
+        await update.message.reply_text(text, parse_mode=ParseMode.HTML)
 
     # ===== ОБРАБОТЧИКИ CALLBACK =====
 
@@ -679,16 +679,16 @@ class TelegramNotifier:
 
         # Получаем статус базы данных
         db_status_text = ""
-            try:
-                if self.trading_engine and hasattr(self.trading_engine, "client") and hasattr(self.trading_engine.client, "db_manager"):
-                    db_status = self.trading_engine.client.db_manager.get_database_status()
-                    db_emoji = "🗄️" if db_status["engine_type"] == "PostgreSQL" else "📁" if db_status["engine_type"] == "SQLite" else "❌"
-                    db_status_text = f"\n{db_emoji} <b>База данных:</b> {db_status['engine_type']}"
-                    if db_status.get("using_sqlite_fallback"):
-                        db_status_text += " (fallback)"
-            except Exception as db_e:
-                logger.warning(f"Ошибка получения статуса БД: {db_e}")
-                db_status_text = "\n❓ <b>База данных:</b> Недоступна"
+        try:
+            if self.trading_engine and hasattr(self.trading_engine, "client") and hasattr(self.trading_engine.client, "db_manager"):
+                db_status = self.trading_engine.client.db_manager.get_database_status()
+                db_emoji = "🗄️" if db_status["engine_type"] == "PostgreSQL" else "📁" if db_status["engine_type"] == "SQLite" else "❌"
+                db_status_text = f"\n{db_emoji} <b>База данных:</b> {db_status['engine_type']}"
+                if db_status.get("using_sqlite_fallback"):
+                    db_status_text += " (fallback)"
+        except Exception as db_e:
+            logger.warning(f"Ошибка получения статуса БД: {db_e}")
+            db_status_text = "\n❓ <b>База данных:</b> Недоступна"
 
         text = f"""
 📊 <b>Статус бота</b>
@@ -706,14 +706,14 @@ class TelegramNotifier:
             """
 
         keyboard = [
-                [InlineKeyboardButton("🔄 Обновить", callback_data="status")],
-                [InlineKeyboardButton("📋 Позиции", callback_data="positions")],
-            ]
+            [InlineKeyboardButton("🔄 Обновить", callback_data="status")],
+            [InlineKeyboardButton("📋 Позиции", callback_data="positions")],
+        ]
         reply_markup = InlineKeyboardMarkup(keyboard)
 
         await query.edit_message_text(
-                text, parse_mode=ParseMode.HTML, reply_markup=reply_markup
-            )
+            text, parse_mode=ParseMode.HTML, reply_markup=reply_markup
+        )
 
     async def _handle_positions_callback(self, query: CallbackQuery):
         """Обработка callback для позиций"""
@@ -721,13 +721,13 @@ class TelegramNotifier:
 
         if not open_positions:
             text = f"📋 <b>Открытых позиций нет</b>\n\n⏰ <i>Проверено: {datetime.utcnow().strftime('%H:%M:%S')}</i>"
-        keyboard = [
+            keyboard = [
                 [InlineKeyboardButton("🔄 Обновить", callback_data="positions")],
                 [InlineKeyboardButton("📊 Статус", callback_data="status")],
             ]
-        reply_markup = InlineKeyboardMarkup(keyboard)
+            reply_markup = InlineKeyboardMarkup(keyboard)
 
-        await query.edit_message_text(
+            await query.edit_message_text(
                 text, parse_mode=ParseMode.HTML, reply_markup=reply_markup
             )
             return
@@ -846,7 +846,7 @@ class TelegramNotifier:
             content = self._get_logs_content()
             logger.info(f"Получено содержимое логов длиной: {len(content)} символов")
             
-        text = f"""
+            text = f"""
 📝 <b>Последние {TAIL_LINES} строк журнала</b>
 
 <code>{content}</code>
@@ -854,13 +854,13 @@ class TelegramNotifier:
 ⏰ <i>Обновлено: {datetime.utcnow().strftime('%H:%M:%S')} UTC</i>
             """
 
-        keyboard = [
+            keyboard = [
                 [InlineKeyboardButton("🔄 Обновить", callback_data="logs")],
                 [InlineKeyboardButton("📊 Статус", callback_data="status")],
             ]
-        reply_markup = InlineKeyboardMarkup(keyboard)
+            reply_markup = InlineKeyboardMarkup(keyboard)
 
-        await query.edit_message_text(text, parse_mode=ParseMode.HTML, reply_markup=reply_markup)
+            await query.edit_message_text(text, parse_mode=ParseMode.HTML, reply_markup=reply_markup)
             logger.info("Callback /logs успешно выполнена")
             
         except Exception as e:
@@ -872,7 +872,7 @@ class TelegramNotifier:
 
 ⏰ <i>{datetime.utcnow().strftime('%H:%M:%S')} UTC</i>
             """
-        await query.edit_message_text(error_text, parse_mode=ParseMode.HTML)
+            await query.edit_message_text(error_text, parse_mode=ParseMode.HTML)
 
     async def _cmd_orders(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Обработчик команды /orders - показывает активные ордера"""
@@ -882,13 +882,13 @@ class TelegramNotifier:
         try:
             if not self.trading_engine or not self.trading_engine.client:
                 await update.message.reply_text("❌ Торговый движок недоступен")
-            return
+                return
 
             orders = await self.trading_engine.client.get_my_orders()
             
             if not orders:
                 await update.message.reply_text("📋 Нет активных ордеров")
-            return
+                return
 
             text = f"📋 <b>Активные ордера ({len(orders)}):</b>\n\n"
             
@@ -915,13 +915,13 @@ class TelegramNotifier:
         try:
             if not context.args or len(context.args) == 0:
                 await update.message.reply_text("❌ Укажите ID ордера: /cancel [order_id]")
-            return
+                return
 
             order_id = context.args[0]
             
             if not self.trading_engine or not self.trading_engine.client:
                 await update.message.reply_text("❌ Торговый движок недоступен")
-            return
+                return
 
             success = await self.trading_engine.client.cancel_order(order_id)
             
@@ -945,7 +945,7 @@ class TelegramNotifier:
                     "❌ Недостаточно параметров: /trade [market_id] [side] [size] [price]\n"
                     "Пример: /trade 123 BUY 100 0.5"
                 )
-            return
+                return
 
             market_id, side, size_str, price_str = context.args[:4]
             
@@ -954,15 +954,15 @@ class TelegramNotifier:
                 price = float(price_str)
             except ValueError:
                 await update.message.reply_text("❌ Размер и цена должны быть числами")
-            return
+                return
 
             if side.upper() not in ["BUY", "SELL"]:
                 await update.message.reply_text("❌ Сторона должна быть BUY или SELL")
-            return
+                return
 
             if not self.trading_engine or not self.trading_engine.client:
                 await update.message.reply_text("❌ Торговый движок недоступен")
-            return
+                return
 
             # Получаем данные рынка
             markets = self.trading_engine.client.get_markets()
@@ -977,7 +977,7 @@ class TelegramNotifier:
 
             if not market_data:
                 await update.message.reply_text(f"❌ Рынок {market_id} не найден")
-            return
+                return
 
             # Получаем token_id для нужной стороны
             token_id = None
@@ -991,7 +991,7 @@ class TelegramNotifier:
 
             if not token_id:
                 await update.message.reply_text(f"❌ Не удалось найти токен для {side}")
-            return
+                return
 
             # Размещаем ордер
             order_result = await self.trading_engine.client.place_order(
