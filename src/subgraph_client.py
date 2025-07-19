@@ -6,9 +6,17 @@ from logging import getLogger
 
 logger = getLogger(__name__)
 
-# URL сабграфа Polymarket V3
-# Добавляем завершающий слеш — без него Cloudflare перенаправляет (301)
-SUBGRAPH_URL = "https://api.thegraph.com/subgraphs/name/polymarket/polymarket-v3/"
+# Формируем URL сабграфа
+from src.config.settings import config
+
+if config.polymarket.THEGRAPH_API_KEY:
+    SUBGRAPH_URL = (
+        f"https://gateway.thegraph.com/api/{config.polymarket.THEGRAPH_API_KEY}" \
+        f"/subgraphs/id/{config.polymarket.SUBGRAPH_ID}"
+    )
+else:
+    # Fallback: старый hosted service (может быть отключён)
+    SUBGRAPH_URL = "https://api.thegraph.com/subgraphs/name/polymarket/polymarket-v3/"
 
 # GraphQL-запрос для получения новых рынков
 MARKETS_QUERY = """

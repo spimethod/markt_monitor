@@ -120,6 +120,14 @@ class PolymarketConfig(BaseSettings):
     WEBSOCKET_FALLBACK_ENABLED: bool = Field(default=True, description="Включить HTTP polling fallback при отказе WebSocket")
     CHAIN_ID: int = Field(default=137, description="Polygon Chain ID (137 = Mainnet, 80001 = Mumbai)")
 
+    # --- Subgraph Gateway ---
+    THEGRAPH_API_KEY: str = Field(
+        default="", description="API ключ The Graph Gateway (https://thegraph.com/studio/apikeys)"
+    )
+    SUBGRAPH_ID: str = Field(
+        default="Bx1W4S7kDVxs9gC3s2G6DS8kdNBJNVhMviCtin2DiBp", description="ID субграфа Polymarket на The Graph"
+    )
+
 
 class TelegramConfig(BaseSettings):
     """Telegram bot settings."""
