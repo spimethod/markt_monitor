@@ -524,15 +524,15 @@ class PolymarketClient:
                 
             try:
                 # Получаем новые рынки для подписки на их asset_ids
-                new_markets = self.get_new_markets(max_age_minutes=60)  # Берем рынки за последний час
+                new_markets = await self.get_new_markets(max_age_minutes=60)  # Берем рынки за последний час
                 if not new_markets:
                     # Если новых нет, берем все рынки как fallback
-                markets = self.get_all_markets_fallback()
-                if not markets or len(markets) == 0:
-                    logger.warning("Нет доступных рынков для WebSocket подписки, используется HTTP polling")
-                    await self._http_polling_fallback()
-                    await asyncio.sleep(60)
-                    continue
+                    markets = self.get_all_markets_fallback()
+                    if not markets or len(markets) == 0:
+                        logger.warning("Нет доступных рынков для WebSocket подписки, используется HTTP polling")
+                        await self._http_polling_fallback()
+                        await asyncio.sleep(60)
+                        continue
                     logger.info(f"🔍 Fallback: извлечение asset_ids из {min(len(markets), 10)} всех рынков...")
                 else:
                     markets = new_markets
