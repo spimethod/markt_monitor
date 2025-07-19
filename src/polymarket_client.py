@@ -21,6 +21,7 @@ from websockets.client import WebSocketClientProtocol
 from loguru import logger
 from src.config.settings import Config
 from src.database.manager import DatabaseManager
+from src import subgraph_client
 
 # Создаем экземпляр конфига, чтобы он был доступен глобально
 # Это безопасно, так как модуль импортируется один раз
@@ -32,7 +33,9 @@ async def default_message_handler(message: Dict[str, Any]):
 
 
 class PolymarketClient:
-    """Асинхронный клиент для взаимодействия с Polymarket API и смарт-контрактами"""
+    """
+    Клиент для взаимодействия с API Polymarket, включая CLOB, WebSocket и Subgraph.
+    """
 
     def __init__(self, message_handler=default_message_handler):
         """Инициализация клиента"""
@@ -66,6 +69,11 @@ class PolymarketClient:
         if self.config.polymarket.USE_WEBSOCKET:
             logger.info("Запуск стабильного WebSocket с автоматическим переподключением")
             self._start_websocket_listener()
+
+        self.client_session = None  # для aiohttp
+        
+        # Кэш для отслеживания обработанных рынков в рамках сессии
+        self.seen_market_ids = set()
 
     def get_address(self) -> Optional[str]:
         """Возвращает адрес аккаунта, если он доступен."""
@@ -161,7 +169,7 @@ class PolymarketClient:
             signature = self.sign_order(order)
             
             # Отправляем на CLOB API
-            order_data = {
+        order_data = {
                 **order,
                 "signature": signature,
                 "user_address": self.account.address
@@ -179,8 +187,8 @@ class PolymarketClient:
             if response and response.status_code == 200:
                 result = response.json()
                 logger.info(f"✅ Ордер успешно размещен: {result.get('order_id', 'N/A')}")
-                
-                # Сохраняем позицию в базу данных
+        
+        # Сохраняем позицию в базу данных
                 await self._save_position_to_db(order, market_data, result)
                 
                 return result
@@ -233,7 +241,7 @@ class PolymarketClient:
                 
         except Exception as e:
             logger.error(f"Ошибка сохранения позиции в БД: {e}")
-
+        
     async def cancel_order(self, order_id: str) -> bool:
         """
         Отменяет ордер через CLOB API
@@ -253,7 +261,7 @@ class PolymarketClient:
             if response and response.status_code == 200:
                 logger.info(f"✅ Ордер {order_id} успешно отменен")
                 return True
-            else:
+                else:
                 logger.error(f"❌ Ошибка отмены ордера {order_id}: {response.status_code if response else 'No response'}")
                 return False
                 
@@ -267,7 +275,7 @@ class PolymarketClient:
         """
         if not self.account:
             logger.error("Невозможно получить ордера: приватный ключ не установлен.")
-            return []
+                return []
             
         try:
             url = f"{self.clob_host}/orders"
@@ -281,228 +289,59 @@ class PolymarketClient:
                 orders = response.json()
                 logger.info(f"✅ Получено {len(orders)} активных ордеров")
                 return orders
-            else:
+                    else:
                 logger.error(f"❌ Ошибка получения ордеров: {response.status_code if response else 'No response'}")
                 return []
                 
         except Exception as e:
             logger.error(f"❌ Ошибка получения ордеров: {e}")
             return []
+            
+    async def get_new_markets(self, max_age_minutes: int = 10) -> list | None:
+        """Основной метод для получения новых рынков через Subgraph."""
+        try:
+            markets = await subgraph_client.fetch_new_markets(max_age_minutes)
+            if markets is None:
+                logger.warning("Основной источник (Subgraph) вернул ошибку (None).")
+                return None
 
-    def get_markets(self) -> list:
-        """Получает список всех рынков (для совместимости)"""
+            new_unique_markets = [
+                market for market in markets 
+                if market.get('id') and market.get('id') not in self.seen_market_ids
+            ]
+            
+            # Обновляем кэш
+            for market in new_unique_markets:
+                self.seen_market_ids.add(market['id'])
+                
+            if len(new_unique_markets) < len(markets):
+                logger.info(f"Отфильтровано {len(markets) - len(new_unique_markets)} уже известных рынков.")
+            
+            return new_unique_markets
+        except Exception as e:
+            logger.error(f"Error: {e}")
+            return None
+
+    def get_all_markets_fallback(self) -> list:
+        """Fallback-метод: получает все активные рынки через CLOB API."""
+        logger.warning("⚠️  Активирован fallback-метод: получение рынков через CLOB API.")
         return self._fetch_all_markets()
 
-    def get_new_markets(self, max_age_minutes: int = 10) -> list:
-        """Получает только новые рынки через WebSocket ловушку"""
-        try:
-            import time
-            
-            # Используем WebSocket подход - получаем рынки через WebSocket
-            # и фильтруем по времени первого обнаружения
-            
-            # Инициализируем кэш новых рынков, если его нет
-            if not hasattr(self, 'new_markets_cache'):
-                self.new_markets_cache = {}
-                self.market_discovery_times = {}
-                logger.info("🆕 Инициализирован кэш новых рынков")
-            
-            current_time = int(time.time())
-            cutoff_time = current_time - (max_age_minutes * 60)
-            
-            # Получаем все рынки через CLOB API
-            all_markets = self._fetch_all_markets()
-            if not all_markets:
-                return []
-            
-            # ---- NEW LOGIC: первая инициализация кэша не считается "новыми" рынками ----
-            if not getattr(self, 'initial_market_cache_done', False):
-                # Заполняем кэш и выходим без возврата рынков
-                for market in all_markets:
-                    if isinstance(market, dict):
-                        market_id = market.get('condition_id') or market.get('question_id') or market.get('market_slug')
-                        if market_id:
-                            self.market_discovery_times[market_id] = current_time
-                self.initial_market_cache_done = True
-                logger.info("🗄️  Первичная загрузка рынков завершена — новые рынки будут отслеживаться со следующего цикла")
-                return []
-            # --------------------------------------------------------------------------
-            
-            new_markets = []
-            
-            for market in all_markets:
-                if not isinstance(market, dict):
-                    continue
-                
-                # Получаем ID рынка
-                market_id = market.get('condition_id') or market.get('question_id') or market.get('market_slug')
-                if not market_id:
-                    continue
-                
-                # Проверяем, видели ли мы этот рынок раньше
-                if market_id not in self.market_discovery_times:
-                    # Новый рынок - запоминаем время обнаружения
-                    self.market_discovery_times[market_id] = current_time
-                    logger.info(f"🆕 Обнаружен новый рынок: {market_id}")
-                
-                # Проверяем, не старше ли рынок max_age_minutes
-                discovery_time = self.market_discovery_times[market_id]
-                if discovery_time >= cutoff_time:
-                    new_markets.append(market)
-            
-            logger.info(f"🔗 WebSocket ловушка: найдено {len(new_markets)} новых рынков (≤{max_age_minutes} мин)")
-            logger.info(f"🔍 ОТЛАДКА: Кэш содержит {len(self.market_discovery_times)} известных рынков")
-            
-            # Детальное логирование новых рынков
-            for i, market in enumerate(new_markets, 1):
-                question = market.get('question', 'Неизвестный рынок')
-                market_id = market.get('condition_id') or market.get('question_id') or market.get('market_slug')
-                discovery_time = self.market_discovery_times.get(market_id, 0)
-                
-                # Вычисляем возраст для отображения
-                if discovery_time > 0:
-                    age_seconds = current_time - discovery_time
-                    age_minutes = age_seconds // 60
-                    age_str = f"{age_minutes} мин"
-                    discovered_at = datetime.fromtimestamp(discovery_time).isoformat()
-                else:
-                    age_str = "N/A"
-                    discovered_at = "N/A"
-                
-                logger.info(f"📋 НОВЫЙ РЫНОК #{i}: {question[:80]}...")
-                logger.info(f"   🆔 ID: {market_id}")
-                logger.info(f"   📅 Обнаружен: {discovered_at}")
-                logger.info(f"   ⏰ Возраст: {age_str}")
-                logger.info(f"   🎮 Активен: {market.get('active', False)}")
-                logger.info(f"   💱 Принимает ордера: {market.get('accepting_orders', False)}")
-                
-                logger.info(f"   {'-'*40}")
-            
-            return new_markets
-                
-        except Exception as e:
-            logger.error(f"❌ Ошибка получения новых рынков через WebSocket ловушку: {e}")
-            return self._get_new_markets_fallback(max_age_minutes)
-
-    def _get_new_markets_fallback(self, max_age_minutes: int = 10) -> list:
-        """Fallback метод - получает все рынки и фильтрует локально"""
-        try:
-            all_markets = self._fetch_all_markets()
-            if not all_markets:
-                return []
-            
-            current_time = datetime.utcnow()
-            new_markets = []
-            
-            for market in all_markets:
-                if not isinstance(market, dict):
-                    continue
-                    
-                # Проверяем время создания рынка
-                market_age = self._get_market_age(market, current_time)
-                if market_age is None:
-                    continue
-                    
-                # Если рынок не старше max_age_minutes минут
-                if market_age <= max_age_minutes:
-                    new_markets.append(market)
-            
-            logger.info(f"🎯 Fallback: найдено {len(new_markets)} новых рынков (не старше {max_age_minutes} минут) из {len(all_markets)}")
-            return new_markets
-                
-        except Exception as e:
-            logger.error(f"❌ Ошибка fallback получения новых рынков: {e}")
-            return []
-
     def _fetch_all_markets(self) -> list:
-        """Получает все рынки от Polymarket API"""
+        """Получает все рынки от Polymarket CLOB API."""
         try:
             url = "https://clob.polymarket.com/markets"
-            logger.info(f"🔗 Запрос рынков: {url}")
-            
+            logger.info(f"🔗 [Fallback] Запрос рынков: {url}")
             response = self._make_request("GET", url)
-            
-            if not response:
-                logger.warning("❌ Polymarket API не вернул данные")
-                return []
-                
-            logger.info(f"✅ Получен ответ от Polymarket API")
-            logger.info(f"📊 Статус код: {response.status_code}")
-            
-            # Получаем JSON из Response объекта
-            try:
-                data = response.json()
-            except Exception as e:
-                logger.error(f"❌ Ошибка парсинга JSON: {e}")
-                return []
-            
-            if isinstance(data, dict):
-                # Если ответ - словарь, ищем список в нем
-                if 'data' in data:
-                    markets = data['data']
-                elif 'markets' in data:
-                    markets = data['markets']  
-                else:
-                    logger.warning(f"⚠️  Неожиданная структура ответа: {list(data.keys())}")
-                    return []
-            elif isinstance(data, list):
-                markets = data
-            else:
-                logger.warning(f"❌ Неожиданный тип JSON данных: {type(data)}")
-                return []
-            
-            logger.info(f"📋 Получено {len(markets)} рынков от Polymarket")
+            if not response: return []
+                        data = response.json()
+            markets = data if isinstance(data, list) else data.get('data', [])
+            logger.info(f"📋 [Fallback] Получено {len(markets)} рынков.")
             return markets
-                
-        except Exception as e:
-            logger.error(f"❌ Ошибка получения рынков: {e}")
+                    except Exception as e:
+            logger.error(f"❌ [Fallback] Ошибка получения рынков: {e}")
             return []
-
-    def _get_market_age(self, market: Dict, current_time: datetime) -> Optional[int]:
-        """Вычисляет возраст рынка в минутах"""
-        try:
-            # Пробуем разные поля для времени создания
-            creation_time = None
-            time_field = None
             
-            # 1. Пробуем created_at (основное поле)
-            if market.get('created_at'):
-                creation_time = datetime.fromisoformat(market['created_at'].replace('Z', '+00:00'))
-                time_field = 'created_at'
-            
-            # 2. Пробуем game_start_time
-            elif market.get('game_start_time'):
-                creation_time = datetime.fromisoformat(market['game_start_time'].replace('Z', '+00:00'))
-                time_field = 'game_start_time'
-            
-            # 3. Пробуем end_date_iso
-            elif market.get('end_date_iso'):
-                creation_time = datetime.fromisoformat(market['end_date_iso'].replace('Z', '+00:00'))
-                time_field = 'end_date_iso'
-            
-            # 4. Пробуем accepting_order_timestamp
-            elif market.get('accepting_order_timestamp'):
-                creation_time = datetime.fromisoformat(market['accepting_order_timestamp'].replace('Z', '+00:00'))
-                time_field = 'accepting_order_timestamp'
-            
-            # 5. Если нет времени создания, считаем рынок старым
-            else:
-                logger.debug(f"Рынок без времени создания: {market.get('question', 'N/A')[:50]}...")
-                return None
-            
-            if creation_time:
-                # Вычисляем разницу в минутах
-                time_diff = current_time.replace(tzinfo=creation_time.tzinfo) - creation_time
-                age_minutes = int(time_diff.total_seconds() / 60)
-                logger.debug(f"Возраст рынка: {age_minutes} мин (поле: {time_field})")
-                return age_minutes
-            
-            return None
-            
-        except Exception as e:
-            logger.debug(f"Ошибка вычисления возраста рынка: {e}")
-            return None
-
     def get_current_price(self, token_id: str) -> Optional[float]:
         """Получение текущей цены токена"""
         # Эта функция требует реальной реализации
@@ -687,12 +526,12 @@ class PolymarketClient:
                 new_markets = self.get_new_markets(max_age_minutes=60)  # Берем рынки за последний час
                 if not new_markets:
                     # Если новых нет, берем все рынки как fallback
-                    markets = self.get_markets()
-                    if not markets or len(markets) == 0:
-                        logger.warning("Нет доступных рынков для WebSocket подписки, используется HTTP polling")
-                        await self._http_polling_fallback()
-                        await asyncio.sleep(60)
-                        continue
+                markets = self.get_all_markets_fallback()
+                if not markets or len(markets) == 0:
+                    logger.warning("Нет доступных рынков для WebSocket подписки, используется HTTP polling")
+                    await self._http_polling_fallback()
+                    await asyncio.sleep(60)
+                    continue
                     logger.info(f"🔍 Fallback: извлечение asset_ids из {min(len(markets), 10)} всех рынков...")
                 else:
                     markets = new_markets

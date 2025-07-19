@@ -413,12 +413,12 @@ class TelegramNotifier:
         # Получаем статус базы данных
         db_status_text = ""
         try:
-            if self.trading_engine and hasattr(self.trading_engine, "client") and hasattr(self.trading_engine.client, "db_manager"):
-                db_status = self.trading_engine.client.db_manager.get_database_status()
-                db_emoji = "🗄️" if db_status["engine_type"] == "PostgreSQL" else "📁" if db_status["engine_type"] == "SQLite" else "❌"
-                db_status_text = f"\n{db_emoji} <b>База данных:</b> {db_status['engine_type']}"
-                if db_status.get("using_sqlite_fallback"):
-                    db_status_text += " (fallback)"
+        if self.trading_engine and hasattr(self.trading_engine, "client") and hasattr(self.trading_engine.client, "db_manager"):
+            db_status = self.trading_engine.client.db_manager.get_database_status()
+            db_emoji = "🗄️" if db_status["engine_type"] == "PostgreSQL" else "📁" if db_status["engine_type"] == "SQLite" else "❌"
+            db_status_text = f"\n{db_emoji} <b>База данных:</b> {db_status['engine_type']}"
+            if db_status.get("using_sqlite_fallback"):
+                db_status_text += " (fallback)"
         except Exception as db_e:
             logger.warning(f"Ошибка получения статуса БД: {db_e}")
             db_status_text = "\n❓ <b>База данных:</b> Недоступна"
@@ -475,7 +475,7 @@ class TelegramNotifier:
             pnl = pos.get("pnl", 0.0)
             pnl_emoji = "📈" if pnl > 0 else "📉" if pnl < 0 else "📊"
 
-            text += f"""
+                text += f"""
 🏷️ <b>ID:</b> <code>{pos.get('id', 'N/A')[:10]}...</code>
 💱 <b>Токен:</b> <code>{pos.get('token_id', 'N/A')[:10]}...</code>
 📊 <b>Размер:</b> {pos.get('size', 0):.2f}
@@ -619,7 +619,7 @@ class TelegramNotifier:
 📝 <b>Описание:</b> {str(e)}
 
 ⏰ <i>{datetime.utcnow().strftime('%H:%M:%S')} UTC</i>
-            """
+        """
             await update.message.reply_text(error_text, parse_mode=ParseMode.HTML)
 
     async def _cmd_help(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -654,43 +654,43 @@ class TelegramNotifier:
 
     async def _handle_callback(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Обработка callback queries от inline кнопок"""
-        query = update.callback_query
-        if not query:
-            return
+            query = update.callback_query
+            if not query:
+                return
 
-        await query.answer()
+            await query.answer()
 
         if query.data == "status":
-            await self._handle_status_callback(query)
+                await self._handle_status_callback(query)
         elif query.data == "positions":
-            await self._handle_positions_callback(query)
+                await self._handle_positions_callback(query)
         elif query.data == "config":
-            await self._handle_config_callback(query)
+                await self._handle_config_callback(query)
         elif query.data == "stop":
-            await self._handle_stop_callback(query)
+                await self._handle_stop_callback(query)
         elif query.data == "start_trading":
-            await self._handle_start_trading_callback(query)
+                await self._handle_start_trading_callback(query)
         elif query.data == "logs":
             await self._handle_logs_callback(query)
 
     async def _handle_status_callback(self, query: CallbackQuery):
         """Обработка callback для статуса"""
-        stats = await self._get_current_stats()
+            stats = await self._get_current_stats()
 
-        # Получаем статус базы данных
-        db_status_text = ""
-        try:
-            if self.trading_engine and hasattr(self.trading_engine, "client") and hasattr(self.trading_engine.client, "db_manager"):
-                db_status = self.trading_engine.client.db_manager.get_database_status()
-                db_emoji = "🗄️" if db_status["engine_type"] == "PostgreSQL" else "📁" if db_status["engine_type"] == "SQLite" else "❌"
-                db_status_text = f"\n{db_emoji} <b>База данных:</b> {db_status['engine_type']}"
-                if db_status.get("using_sqlite_fallback"):
-                    db_status_text += " (fallback)"
-        except Exception as db_e:
-            logger.warning(f"Ошибка получения статуса БД: {db_e}")
-            db_status_text = "\n❓ <b>База данных:</b> Недоступна"
+            # Получаем статус базы данных
+            db_status_text = ""
+            try:
+                if self.trading_engine and hasattr(self.trading_engine, "client") and hasattr(self.trading_engine.client, "db_manager"):
+                    db_status = self.trading_engine.client.db_manager.get_database_status()
+                    db_emoji = "🗄️" if db_status["engine_type"] == "PostgreSQL" else "📁" if db_status["engine_type"] == "SQLite" else "❌"
+                    db_status_text = f"\n{db_emoji} <b>База данных:</b> {db_status['engine_type']}"
+                    if db_status.get("using_sqlite_fallback"):
+                        db_status_text += " (fallback)"
+            except Exception as db_e:
+                logger.warning(f"Ошибка получения статуса БД: {db_e}")
+                db_status_text = "\n❓ <b>База данных:</b> Недоступна"
 
-        text = f"""
+            text = f"""
 📊 <b>Статус бота</b>
 
 🤖 <b>Состояние:</b> {self.bot_status}
@@ -703,17 +703,17 @@ class TelegramNotifier:
 • Успешных: {stats.get('successful_trades', 0)}/{stats.get('total_trades', 0)}
 
 ⏰ <i>Последнее обновление: {datetime.utcnow().strftime('%H:%M:%S')} UTC</i>
-        """
+            """
 
-        keyboard = [
-            [InlineKeyboardButton("🔄 Обновить", callback_data="status")],
-            [InlineKeyboardButton("📋 Позиции", callback_data="positions")],
-        ]
-        reply_markup = InlineKeyboardMarkup(keyboard)
+            keyboard = [
+                [InlineKeyboardButton("🔄 Обновить", callback_data="status")],
+                [InlineKeyboardButton("📋 Позиции", callback_data="positions")],
+            ]
+            reply_markup = InlineKeyboardMarkup(keyboard)
 
-        await query.edit_message_text(
-            text, parse_mode=ParseMode.HTML, reply_markup=reply_markup
-        )
+            await query.edit_message_text(
+                text, parse_mode=ParseMode.HTML, reply_markup=reply_markup
+            )
 
     async def _handle_positions_callback(self, query: CallbackQuery):
         """Обработка callback для позиций"""
@@ -739,7 +739,7 @@ class TelegramNotifier:
             pnl = pos.get("pnl", 0.0)
             pnl_emoji = "📈" if pnl > 0 else "📉" if pnl < 0 else "📊"
 
-            text += f"""
+                text += f"""
 🏷️ <b>ID:</b> <code>{pos.get('id', 'N/A')[:10]}...</code>
 💱 <b>Токен:</b> <code>{pos.get('token_id', 'N/A')[:10]}...</code>
 📊 <b>Размер:</b> {pos.get('size', 0):.2f}

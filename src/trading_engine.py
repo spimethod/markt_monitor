@@ -194,62 +194,63 @@ class TradingEngine:
         logger.info("Запуск мониторинга рынков...")
         while self.is_running:
             try:
-                # Очищаем устаревшие рынки из кэша
-                self.market_filter.cleanup_old_markets()
-                
                 logger.info("🔍 Поиск новых рынков...")
-                # Получаем только новые рынки (не старше 10 минут)
-                markets = self.client.get_new_markets(max_age_minutes=10)
                 
-                # Проверяем, что получили список
-                if not isinstance(markets, list):
-                    logger.warning(f"get_new_markets() вернул не список: {type(markets)}")
-                    await asyncio.sleep(60)
-                    continue
+                # 1. Основной источник - Subgraph
+                markets = await self.client.get_new_markets(max_age_minutes=10)
                 
+                # 2. Обработка ответа
+                if markets is None:
+                    # Ошибка в источнике, активируем fallback
+                    logger.warning("🚨 Основной источник данных (Subgraph) не ответил. Активация Fallback...")
+                    markets = self.client.get_all_markets_fallback()
+                    
+                    # Фильтруем уже обработанные в fallback
+                    markets = [m for m in markets if m.get('id') not in self.market_filter.processed_markets]
+
                 if not markets:
-                    logger.info("📊 Новых рынков не найдено (все старше 10 минут)")
+                    logger.info("📊 Новых рынков для анализа не найдено.")
                     await asyncio.sleep(60)
                     continue
                 
-                logger.info(f"📊 Получено {len(markets)} новых рынков для анализа")
+                logger.info(f"📊 Получено {len(markets)} рынков для анализа")
                 
                 new_markets_found = 0
                 suitable_markets = 0
                 
                 for i, market in enumerate(markets, 1):
                     # Получаем ID из правильных полей API
-                    market_id = market.get("question_id") or market.get("condition_id") or market.get("market_slug")
+                    market_id = market.get("id") or market.get("conditionId")
                     market_question = market.get("question", "Неизвестный рынок")
                     
                     logger.info(f"🔍 АНАЛИЗ РЫНКА #{i}/{len(markets)}")
                     logger.info(f"   📋 Вопрос: {market_question}")
                     logger.info(f"   🆔 ID: {market_id}")
                     
-                    # Детальная информация о рынке
+                    # Детальная информация о рынке из Subgraph
+                    created_timestamp = market.get('createdTimestamp')
+                    if created_timestamp:
+                        created_dt = datetime.fromtimestamp(int(created_timestamp))
+                        age_seconds = int(time.time()) - int(created_timestamp)
+                        age_str = f"{age_seconds // 60} мин {age_seconds % 60} сек"
+                    else:
+                        created_dt = "N/A"
+                        age_str = "N/A"
+
                     logger.info(f"   📊 ДАННЫЕ РЫНКА:")
+                    logger.info(f"      📅 Создан: {created_dt}")
+                    logger.info(f"      ⏰ Возраст: {age_str}")
                     logger.info(f"      🎮 Активен: {market.get('active', False)}")
-                    logger.info(f"      💱 Принимает ордера: {market.get('accepting_orders', False)}")
-                    logger.info(f"      🔒 Закрыт: {market.get('closed', False)}")
-                    logger.info(f"      📅 Создан: {market.get('created_at', 'N/A')}")
-                    logger.info(f"      ⏰ Окончание: {market.get('end_date_iso', 'N/A')}")
-                    logger.info(f"      💰 Минимальная ликвидность: {market.get('min_liquidity', 'N/A')}")
-                    logger.info(f"      🏷️  Категория: {market.get('category', 'N/A')}")
+                    logger.info(f"      💱 Принимает ордера: {market.get('acceptingOrders', False)}")
                     
                     # Детальная информация о токенах
                     tokens = market.get('tokens', [])
                     if tokens:
                         logger.info(f"   🎯 ТОКЕНЫ ({len(tokens)}):")
                         for j, token in enumerate(tokens, 1):
-                            if isinstance(token, dict):
-                                logger.info(f"      #{j} ID: {token.get('id', 'N/A')}")
-                                logger.info(f"         Название: {token.get('name', 'N/A')}")
-                                logger.info(f"         Исход: {token.get('outcome', 'N/A')}")
-                                logger.info(f"         Цена: {token.get('price', 'N/A')}")
-                                logger.info(f"         Объем: {token.get('volume', 'N/A')}")
-                                logger.info(f"         Ликвидность: {token.get('liquidity', 'N/A')}")
+                            logger.info(f"      #{j} {token.get('name', 'N/A')}: цена {token.get('price', 'N/A')}")
                     else:
-                        logger.info(f"   ❌ Токены не найдены")
+                        logger.info(f"   ❌ Токены не найдены (возможно, нужно запросить дополнительно)")
                     
                     # Анализ пригодности
                     should_trade, reason = self.market_filter.should_trade_market(market)
