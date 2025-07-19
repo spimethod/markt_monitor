@@ -711,11 +711,21 @@ class PolymarketClient:
                                 "⏰ <i>{}</i>".format(datetime.now().strftime('%H:%M:%S'))
                             )
                         
-                        # Создаем задачу для периодических PING сообщений
-                        ping_task = asyncio.create_task(self._websocket_ping_task(websocket))
+                        # Используем встроенный heartbeat библиотеки websockets
+                        # ping_task = asyncio.create_task(self._websocket_ping_task(websocket))
                         
                         # Основной цикл получения сообщений
                         async for message in websocket:
+                            # Обрабатываем PONG сообщения (heartbeat)
+                            if message == "PONG":
+                                logger.debug("← PONG (heartbeat)")
+                                continue
+                            
+                            # Проверяем, что сообщение похоже на JSON
+                            if not (isinstance(message, str) and (message.startswith("{") or message.startswith("["))):
+                                logger.debug(f"Не-JSON сообщение: {message[:50]}")
+                                continue
+                            
                             try:
                                 data = json.loads(message)
                                 logger.debug(f"📨 WebSocket сообщение: {type(data)} - {str(data)[:200]}")
@@ -740,7 +750,7 @@ class PolymarketClient:
                                 logger.debug(f"🔍 Проблемное сообщение: {message[:500]}")
                         
                         # Отменяем ping задачу при выходе из цикла
-                        ping_task.cancel()
+                        # ping_task.cancel()
                         
                     except websockets.exceptions.ConnectionClosed as e:
                         self.is_connected = False
