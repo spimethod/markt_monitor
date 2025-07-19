@@ -323,34 +323,60 @@ class PolymarketClient:
             return None
 
     def _normalize_market_data(self, market_data: Dict) -> Dict:
-        """Приводит данные о рынке к единому формату (как у Subgraph)"""
+        """Приводит CLOB-рынок к формату Subgraph + вычисляет createdTimestamp."""
+        # Пытаемся взять дату старта из rewards.event_start_date или game_start_time
+        iso_date = None
+        rewards = market_data.get("rewards")
+        if isinstance(rewards, dict):
+            iso_date = rewards.get("event_start_date") or rewards.get("event_start_time")
+        if not iso_date:
+            iso_date = market_data.get("game_start_time") or market_data.get("created_at")
+        
+        created_ts = None
+        if iso_date:
+            try:
+                created_dt = datetime.fromisoformat(iso_date.replace("Z", "+00:00"))
+                created_ts = int(created_dt.timestamp())
+            except Exception:
+                created_ts = None
+        
         return {
-            "id": market_data.get("condition_id"),  # Основной ID
-            "conditionId": market_data.get("condition_id"), # Дублируем для совместимости
+            "id": market_data.get("condition_id"),
+            "conditionId": market_data.get("condition_id"),
             "question": market_data.get("question"),
-            "slug": market_data.get("slug"),
-            "createdTimestamp": market_data.get("created_at"),
+            "slug": market_data.get("market_slug") or market_data.get("slug"),
+            "createdTimestamp": created_ts,
             "active": market_data.get("active", False),
-            "acceptingOrders": market_data.get("accepting_orders", False), # Нормализуем ключ
+            # Нормализуем ключ: и camelCase и snake_case
+            "acceptingOrders": market_data.get("acceptingOrders", market_data.get("accepting_orders", False)),
+            "accepting_orders": market_data.get("acceptingOrders", market_data.get("accepting_orders", False)),
             "tokens": [
                 {
-                    "id": token.get("id"),
-                    "name": token.get("name"),
-                    "outcome": token.get("name"), # В fallback нет outcome, используем name
-                    "price": token.get("price")
+                    "id": t.get("token_id"),
+                    "name": t.get("outcome"),
+                    "outcome": t.get("outcome"),
+                    "price": t.get("price") or t.get("prob", t.get("price_per_share"))
                 }
-                for token in market_data.get("tokens", [])
+                for t in market_data.get("tokens", [])
             ]
         }
         
-    def get_all_markets_fallback(self) -> list:
-        """Fallback-метод: получает все активные рынки через CLOB API."""
-        logger.warning("⚠️  Активирован fallback-метод: получение рынков через CLOB API.")
+    def get_all_markets_fallback(self, max_age_minutes: int = 10) -> list:
+        """Fallback-метод: получает рынки и возвращает только созданные ≤ max_age_minutes назад."""
+        logger.warning("⚠️  Fallback: получение рынков через CLOB API")
+        now_ts = int(time.time())
         raw_markets = self._fetch_all_markets()
-        
-        normalized_markets = [self._normalize_market_data(m) for m in raw_markets]
-        
-        return normalized_markets
+
+        fresh_markets: list = []
+        for m in raw_markets:
+            norm = self._normalize_market_data(m)
+            ts = norm.get("createdTimestamp")
+            if ts and (now_ts - ts) <= max_age_minutes * 60:
+                if norm["id"] and norm["id"] not in self.seen_market_ids:
+                    fresh_markets.append(norm)
+                    self.seen_market_ids.add(norm["id"])
+        logger.info(f"📋 [Fallback] Новых рынков ≤{max_age_minutes} мин: {len(fresh_markets)}")
+        return fresh_markets
 
     def _fetch_all_markets(self) -> list:
         """Получает все рынки от Polymarket CLOB API."""

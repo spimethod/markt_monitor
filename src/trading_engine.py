@@ -203,7 +203,7 @@ class TradingEngine:
                 if markets is None:
                     # Ошибка в источнике, активируем fallback
                     logger.warning("🚨 Основной источник данных (Subgraph) не ответил. Активация Fallback...")
-                    markets = self.client.get_all_markets_fallback()
+                    markets = self.client.get_all_markets_fallback(max_age_minutes=10)
                     
                     # Фильтруем уже обработанные в fallback
                     markets = [m for m in markets if m.get('id') not in self.market_filter.processed_markets]
