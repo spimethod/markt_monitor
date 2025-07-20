@@ -330,7 +330,12 @@ class PolymarketClient:
         if isinstance(rewards, dict):
             iso_date = rewards.get("event_start_date") or rewards.get("event_start_time")
         if not iso_date:
-            iso_date = market_data.get("game_start_time") or market_data.get("created_at")
+            # CLOB API: accepting_order_timestamp указывает когда рынок открыл книгу ордеров
+            iso_date = (
+                market_data.get("accepting_order_timestamp")
+                or market_data.get("game_start_time")
+                or market_data.get("created_at")
+            )
         
         created_ts = None
         if iso_date:
