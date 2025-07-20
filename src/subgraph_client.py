@@ -101,6 +101,39 @@ async def fetch_new_markets(max_age_minutes: int = 10) -> list | None:
             logger.error(f"❌ Subgraph не вернул рынки. Последняя ошибка: {last_error}")
             return None
 
+        # Если использовали fixedProductMarketMakers – нужно обогатить деталями из clobMarkets
+        if fld == "fixedProductMarketMakers":
+            try:
+                fpmm_ids = [m["id"] for m in markets]
+                if not fpmm_ids:
+                    return []
+
+                cl_query = """
+                query ($ids:[Bytes!]!, $limit:Int!){
+                  clobMarkets(where:{id_in:$ids}, first:$limit){
+                    id
+                    question
+                    active
+                    acceptingOrders
+                    tokens{ id outcome price }
+                  }
+                }
+                """
+                cl_payload = {"query": cl_query, "variables": {"ids": fpmm_ids, "limit": len(fpmm_ids)}}
+                async with httpx.AsyncClient(timeout=15.0, follow_redirects=True) as client:
+                    cl_resp = await client.post(SUBGRAPH_URL, json=cl_payload)
+                cl_data = cl_resp.json()
+                cl_map = {c["id"]: c for c in cl_data.get("data", {}).get("clobMarkets", [])}
+
+                # объединяем
+                enriched = []
+                for m in markets:
+                    det = cl_map.get(m["id"], {})
+                    enriched.append({**m, **det})
+                markets = enriched
+            except Exception as e:
+                logger.warning(f"⚠️  Не удалось обогатить fixedProductMarketMakers деталями: {e}")
+
         logger.info(f"🎯 Subgraph вернул {len(markets)} новых рынков (≤{max_age_minutes} мин)")
         return markets
 
