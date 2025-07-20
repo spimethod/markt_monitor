@@ -73,7 +73,24 @@ async def fetch_new_markets(max_age_minutes: int = 10) -> list | None:
         for fld in field_candidates:
             if not fld:
                 continue
-            query_str = QUERY_TEMPLATE.format(field=fld)
+            if fld == "fixedProductMarketMakers":
+                query_str = f"""
+                query GetNewMarkets($ts:Int!, $limit:Int!){{
+                  fixedProductMarketMakers(
+                    first:$limit
+                    orderBy: creationTimestamp
+                    orderDirection: desc
+                    where: {{ creationTimestamp_gt:$ts }}
+                  ){{
+                    id
+                    creationTimestamp
+                    outcomeTokenPrices
+                    outcomeTokenAmounts
+                    fee
+                  }}
+                }}"""
+            else:
+                query_str = QUERY_TEMPLATE.format(field=fld)
             payload = {"query": query_str, "variables": variables}
 
             logger.info(f"🔗 Запрос новых рынков через Subgraph: {SUBGRAPH_URL}")
