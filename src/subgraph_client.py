@@ -20,12 +20,16 @@ else:
 
 # GraphQL-запрос для получения новых рынков
 MARKETS_QUERY = """
-query GetNewMarkets($min_timestamp: BigInt!, $limit: Int!) {
-  marketEntities(
+query GetNewMarkets($ts: Int!, $limit: Int!) {
+  markets(
     first: $limit
     orderBy: createdTimestamp
     orderDirection: desc
-    where: { createdTimestamp_gt: $min_timestamp }
+    where: {
+      createdTimestamp_gt: $ts
+      active: true
+      acceptingOrders: true
+    }
   ) {
     id
     question
@@ -57,8 +61,8 @@ async def fetch_new_markets(max_age_minutes: int = 10) -> list | None:
         min_timestamp = now - (max_age_minutes * 60)
 
         variables = {
-            "min_timestamp": str(min_timestamp),  # BigInt как строка
-            "limit": 100
+            "ts": min_timestamp,
+            "limit": 100,
         }
         
         payload = {
@@ -79,11 +83,11 @@ async def fetch_new_markets(max_age_minutes: int = 10) -> list | None:
             logger.error(f"❌ Ошибка от Subgraph API: {data['errors']}")
             return None
 
-        if "data" not in data or "marketEntities" not in data["data"]:
+        if "data" not in data or "markets" not in data["data"]:
             logger.error(f"❌ Неожиданная структура ответа от Subgraph: {data}")
             return None
 
-        markets = data["data"]["marketEntities"]
+        markets = data["data"]["markets"]
         logger.info(f"🎯 Subgraph вернул {len(markets)} новых рынков (≤{max_age_minutes} мин)")
         return markets
 
