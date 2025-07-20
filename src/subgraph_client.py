@@ -18,32 +18,31 @@ else:
     # Fallback: старый hosted service (может быть отключён)
     SUBGRAPH_URL = "https://api.thegraph.com/subgraphs/name/polymarket/polymarket-v3/"
 
-# GraphQL-запрос для получения новых рынков
-MARKETS_QUERY = """
-query GetNewMarkets($ts: Int!, $limit: Int!) {
-  markets(
+# шаблон запроса — подставляем root-поле
+QUERY_TEMPLATE = """
+query GetNewMarkets($ts: Int!, $limit: Int!) {{
+  {field}(
     first: $limit
     orderBy: createdTimestamp
     orderDirection: desc
-    where: {
+    where: {{
       createdTimestamp_gt: $ts
       active: true
       acceptingOrders: true
-    }
-  ) {
+    }}
+  ) {{
     id
     question
     createdTimestamp
     active
     acceptingOrders
-    tokens {
+    tokens {{
       id
       outcome
       price
-    }
-  }
-}
-"""
+    }}
+  }}
+}}"""
 
 async def fetch_new_markets(max_age_minutes: int = 10) -> list | None:
     """
@@ -65,29 +64,43 @@ async def fetch_new_markets(max_age_minutes: int = 10) -> list | None:
             "limit": 100,
         }
         
-        payload = {
-            "query": MARKETS_QUERY,
-            "variables": variables
-        }
+        # выбираем root-поле
+        primary_field = config.polymarket.SUBGRAPH_FIELD.strip() or None
+        field_candidates = [primary_field] if primary_field else ["markets", "clobMarkets", "marketEntities"]
 
-        logger.info(f"🔗 Запрос новых рынков через Subgraph: {SUBGRAPH_URL}")
-        logger.debug(f"   📋 Variables: {variables}")
+        markets: list | None = None
+        last_error = None
+        for fld in field_candidates:
+            if not fld:
+                continue
+            query_str = QUERY_TEMPLATE.format(field=fld)
+            payload = {"query": query_str, "variables": variables}
 
-        async with httpx.AsyncClient(timeout=15.0, follow_redirects=True) as client:
-            response = await client.post(SUBGRAPH_URL, json=payload)
-            response.raise_for_status()
+            logger.info(f"🔗 Запрос новых рынков через Subgraph: {SUBGRAPH_URL}")
+            logger.debug(f"   📋 Variables: {variables}")
 
-        data = response.json()
+            async with httpx.AsyncClient(timeout=15.0, follow_redirects=True) as client:
+                response = await client.post(SUBGRAPH_URL, json=payload)
+            data = response.json()
 
-        if "errors" in data:
-            logger.error(f"❌ Ошибка от Subgraph API: {data['errors']}")
+            if "errors" in data:
+                last_error = data["errors"]
+                # если ошибка из-за отсутствия поля — пробуем следующий вариант
+                if any("has no field" in err.get("message", "") for err in data["errors"]):
+                    logger.warning(f"Root-поле '{fld}' не найдено в субграфе, пробую другой вариант…")
+                    continue
+                else:
+                    logger.error(f"❌ Ошибка от Subgraph API: {data['errors']}")
+                    return None
+            else:
+                markets = data["data"].get(fld)
+                if markets is not None:
+                    break
+
+        if markets is None:
+            logger.error(f"❌ Subgraph не вернул рынки. Последняя ошибка: {last_error}")
             return None
 
-        if "data" not in data or "markets" not in data["data"]:
-            logger.error(f"❌ Неожиданная структура ответа от Subgraph: {data}")
-            return None
-
-        markets = data["data"]["markets"]
         logger.info(f"🎯 Subgraph вернул {len(markets)} новых рынков (≤{max_age_minutes} мин)")
         return markets
 

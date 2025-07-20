@@ -128,6 +128,11 @@ class PolymarketConfig(BaseSettings):
         default="Bx1W4S7kDVxs9gC3s2G6DS8kdNBJNVhMviCtin2DiBp", description="ID субграфа Polymarket на The Graph"
     )
 
+    # root field (optional). Если пусто, клиент подберёт автоматически.
+    SUBGRAPH_FIELD: str = Field(
+        default="", description="root-поле субграфа (markets / clobMarkets / marketEntities)"
+    )
+
 
 class TelegramConfig(BaseSettings):
     """Telegram bot settings."""
