@@ -130,7 +130,7 @@ class PolymarketConfig(BaseSettings):
 
     # root field (optional). Если пусто, клиент подберёт автоматически.
     SUBGRAPH_FIELD: str = Field(
-        default="", description="root-поле субграфа (markets / clobMarkets / marketEntities)"
+        default="fixedProductMarketMakers", description="root-поле субграфа (markets / clobMarkets / marketEntities / fixedProductMarketMakers)"
     )
 
 

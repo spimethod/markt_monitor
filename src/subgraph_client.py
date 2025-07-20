@@ -23,10 +23,10 @@ QUERY_TEMPLATE = """
 query GetNewMarkets($ts: Int!, $limit: Int!) {{
   {field}(
     first: $limit
-    orderBy: createdTimestamp
+    orderBy: creationTimestamp
     orderDirection: desc
     where: {{
-      createdTimestamp_gt: $ts
+      creationTimestamp_gt: $ts
       active: true
       acceptingOrders: true
     }}
