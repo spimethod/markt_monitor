@@ -1,4 +1,4 @@
-# Polymarket Factory Monitor
+# Markt Monitor
 
 Мониторинг всех фабрик Polymarket на Polygon в реальном времени.
 
@@ -17,11 +17,8 @@
 
 ```bash
 # Клонирование
-git clone https://github.com/spimethod/polymarket.git
-cd polymarket
-
-# Переключение на ветку мониторинга
-git checkout watch_all_factories
+git clone https://github.com/spimethod/markt_monitor.git
+cd markt_monitor
 
 # Установка зависимостей
 pip install -r requirements.txt
@@ -33,10 +30,9 @@ python main.py
 ### Развертывание на Railway
 
 1. **Форкните репозиторий** на GitHub
-2. **Переключитесь на ветку** `watch_all_factories`
-3. **Создайте проект** на [railway.app](https://railway.app)
-4. **Подключите GitHub репозиторий**
-5. **Деплой запустится автоматически**
+2. **Создайте проект** на [railway.app](https://railway.app)
+3. **Подключите GitHub репозиторий**
+4. **Деплой запустится автоматически**
 
 ## 📡 Мониторинг
 
@@ -143,7 +139,7 @@ MIT License - см. файл LICENSE
 ## 📞 Поддержка
 
 - 📖 [Документация Polymarket](https://docs.polymarket.com/)
-- 💬 [GitHub Issues](https://github.com/spimethod/polymarket/issues)
+- 💬 [GitHub Issues](https://github.com/spimethod/markt_monitor/issues)
 - 🐦 [Telegram](https://t.me/polymarket_support)
 
 ---
