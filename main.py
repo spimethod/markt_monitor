@@ -13,6 +13,10 @@ from web3.types import FilterParams
 from eth_utils import to_checksum_address, event_abi_to_log_topic
 from loguru import logger
 
+# Настройка loguru для Railway
+logger.remove()
+logger.add(sys.stdout, format="{time} | {level} | {message}", level="INFO")
+
 # ---------------------------------------------------------------------------
 # WebSocket RPC (Alchemy)
 # ---------------------------------------------------------------------------
