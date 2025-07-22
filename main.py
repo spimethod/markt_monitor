@@ -123,6 +123,12 @@ def monitor_new_markets():
         'order': 'startDate',
         'ascending': False
     }
+    SKIP_PREFIXES = [
+        "Bitcoin Up or Down",
+        "Ethereum Up or Down",
+        "Solana Up or Down",
+        "XRP Up or Down"
+    ]
     try:
         response = requests.get(API_URL, params=params, timeout=10)
         response.raise_for_status()
@@ -130,13 +136,13 @@ def monitor_new_markets():
         logger.info(f"📊 Получено от API: {len(markets)} рынков")
         
         new_markets = []
-        skipped_bitcoin = 0
+        skipped_special = 0
         already_exists = 0
         
         for market in markets:
             question = get_question(market) or ""
-            if question.startswith("Bitcoin Up or Down"):
-                skipped_bitcoin += 1
+            if any(question.startswith(prefix) for prefix in SKIP_PREFIXES):
+                skipped_special += 1
                 continue  # Пропускаем такие рынки
             market_id = get_id(market)
             if not market_exists(market_id):
@@ -150,7 +156,7 @@ def monitor_new_markets():
             else:
                 already_exists += 1
         
-        logger.info(f"📈 Статистика: {len(new_markets)} новых, {already_exists} уже в базе, {skipped_bitcoin} пропущено (Bitcoin)")
+        logger.info(f"📈 Статистика: {len(new_markets)} новых, {already_exists} уже в базе, {skipped_special} пропущено (Up or Down)")
         
         if new_markets:
             save_markets(new_markets)
