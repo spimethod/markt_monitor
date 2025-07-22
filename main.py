@@ -13,7 +13,7 @@ from loguru import logger
 from datetime import datetime, timedelta, timezone
 
 # === Конфиг ===
-API_URL = os.getenv("API_URL", "https://gamma-api.polymarket.com/markets")
+API_URL = os.getenv("API_URL")
 POLL_INTERVAL = int(os.getenv("POLL_INTERVAL", 30))  # секунд
 
 # === Параметры подключения к PostgreSQL (Railway) ===
