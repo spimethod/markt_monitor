@@ -6,6 +6,7 @@
 import requests
 import time
 import os
+import sys
 from loguru import logger
 
 logger.remove()
