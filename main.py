@@ -117,12 +117,13 @@ class PolymarketFactoryMonitor:
         
         try:
             while self.is_running:
-                # Получаем новые события
-                for log in self.log_filter.get_new_entries():
-                    self.process_event(log)
-                
-                # Пауза между проверками
-                time.sleep(2)
+                try:
+                    for log in self.log_filter.get_new_entries():
+                        self.process_event(log)
+                    time.sleep(10)  # Увеличенная задержка между запросами
+                except Exception as e:
+                    logger.error(f"❌ Ошибка мониторинга: {e}")
+                    time.sleep(30)  # Подождать перед повтором при ошибке
                 
         except KeyboardInterrupt:
             logger.info("⏹️ Получен сигнал остановки")
