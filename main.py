@@ -31,14 +31,13 @@ CREATE TABLE IF NOT EXISTS markets (
     id TEXT PRIMARY KEY,
     question TEXT,
     created_at TIMESTAMP,
-    accepting_orders BOOLEAN,
     active BOOLEAN,
     slug TEXT
 );
 """
 
 INSERT_MARKET_SQL = """
-INSERT INTO markets (id, question, created_at, accepting_orders, active, slug)
+INSERT INTO markets (id, question, created_at, active, slug)
 VALUES %s
 ON CONFLICT (id) DO NOTHING;
 """
@@ -50,19 +49,14 @@ DELETE FROM markets WHERE created_at IS NOT NULL AND created_at < %s;
 RETENTION_HOURS = 25
 
 def get_creation_time(market):
-    # Пробуем разные варианты времени создания
     for key in ["startTime", "start_time", "startDate", "start_date", "createdAt", "created_at"]:
         val = market.get(key)
         if val:
             try:
-                # Приводим к datetime
                 return datetime.fromisoformat(val.replace("Z", "+00:00"))
             except Exception:
                 pass
     return None
-
-def get_accepting_orders(market):
-    return bool(market.get("accepting_orders", False))
 
 def get_active(market):
     return bool(market.get("active", False))
@@ -104,7 +98,6 @@ def save_markets(markets):
             get_id(m),
             get_question(m),
             get_creation_time(m),
-            get_accepting_orders(m),
             get_active(m),
             get_slug(m)
         ))
@@ -145,7 +138,6 @@ def monitor_new_markets():
                 logger.info(f"🆕 Новый рынок: {question}")
                 logger.info(f"ID: {market_id}")
                 logger.info(f"Время создания: {get_creation_time(market)}")
-                logger.info(f"Можно делать ставки: {get_accepting_orders(market)}")
                 logger.info(f"Активный: {get_active(market)}")
                 logger.info(f"Slug: {get_slug(market)}")
                 logger.info("---")
