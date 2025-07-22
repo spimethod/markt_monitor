@@ -12,7 +12,7 @@ from psycopg2.extras import execute_values
 from loguru import logger
 
 # === Конфиг ===
-API_URL = os.getenv("API_URL", "https://gamma-api.polymarket.com/markets")
+API_URL = os.getenv("API_URL")
 POLL_INTERVAL = int(os.getenv("POLL_INTERVAL", 30))  # секунд
 
 # === Параметры подключения к PostgreSQL (Railway) ===
@@ -145,10 +145,13 @@ def monitor_new_markets():
         markets = response.json()
         new_markets = []
         for market in markets:
+            question = get_question(market) or ""
+            if question.startswith("Bitcoin Up or Down"):
+                continue  # Пропускаем такие рынки
             market_id = get_id(market)
             if not market_exists(market_id):
                 new_markets.append(market)
-                logger.info(f"🆕 Новый рынок: {get_question(market)}")
+                logger.info(f"🆕 Новый рынок: {question}")
                 logger.info(f"ID: {market_id}")
                 logger.info(f"Время создания: {get_creation_time(market)}")
                 logger.info(f"Бинарный: {is_binary_market(market)}")
