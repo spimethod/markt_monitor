@@ -127,10 +127,16 @@ def monitor_new_markets():
         response = requests.get(API_URL, params=params, timeout=10)
         response.raise_for_status()
         markets = response.json()
+        logger.info(f"📊 Получено от API: {len(markets)} рынков")
+        
         new_markets = []
+        skipped_bitcoin = 0
+        already_exists = 0
+        
         for market in markets:
             question = get_question(market) or ""
             if question.startswith("Bitcoin Up or Down"):
+                skipped_bitcoin += 1
                 continue  # Пропускаем такие рынки
             market_id = get_id(market)
             if not market_exists(market_id):
@@ -141,6 +147,11 @@ def monitor_new_markets():
                 logger.info(f"Активный: {get_active(market)}")
                 logger.info(f"Slug: {get_slug(market)}")
                 logger.info("---")
+            else:
+                already_exists += 1
+        
+        logger.info(f"📈 Статистика: {len(new_markets)} новых, {already_exists} уже в базе, {skipped_bitcoin} пропущено (Bitcoin)")
+        
         if new_markets:
             save_markets(new_markets)
         else:
