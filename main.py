@@ -34,7 +34,7 @@ def monitor_new_markets():
     params = {
         'active': True,
         'limit': 20,
-        'order': 'start_date',
+        'order': 'startDate',  # исправлено!
         'ascending': False
     }
     try:
