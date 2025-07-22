@@ -79,7 +79,7 @@ class PolymarketFactoryMonitor:
             self.log_filter = self.w3.eth.filter(cast(FilterParams, {
                 "address": FACTORIES,
                 "fromBlock": "latest",
-                "topics": [[TOPIC_AMM.hex(), TOPIC_CLOB.hex(), TOPIC_PARLAY.hex()]]
+                "topics": [[TOPIC_AMM, TOPIC_CLOB, TOPIC_PARLAY]]
             }))
             
             logger.info("✅ Фильтр событий создан")
