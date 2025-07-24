@@ -299,8 +299,8 @@ def get_condition_id(market):
     return market.get('condition_id')
 
 def get_clob_token_ids(market):
-    """Извлекает clob_token_ids из CLOB API данных"""
-    # Используем token_ids из CLOB API, если они есть в market
+    """Извлекает clob_token_ids из обогащенного market объекта"""
+    # Используем token_ids из обогащенного market объекта
     token_ids = market.get('clob_token_ids', [])
     
     # Убеждаемся, что это список строк
@@ -362,67 +362,68 @@ def monitor_new_markets():
                 continue  # Пропускаем такие рынки
             
             market_id = get_id(market)
-            logger.debug(f"Проверяю рынок ID: {market_id}, Slug: {get_slug(market)}")
             
-            if not market_exists(market_id):
-                logger.info(f"🆕 Обрабатываю новый рынок: {market_id}")
-                
-                # Получаем condition_id и clob_token_ids из CLOB API
-                slug = get_slug(market)
-                condition_id, clob_token_ids, clob_error = get_market_ids_from_clob(slug)
-                
-                # Если CLOB API не дал результатов, пробуем Gamma API
-                if clob_error and "not tradeable" in clob_error:
-                    logger.info(f"🔄 Рынок не торгуется в CLOB API, пробую Gamma API...")
-                    condition_id, clob_token_ids, gamma_error = get_market_ids_from_gamma_api(slug)
-                    
-                    if gamma_error:
-                        logger.warning(f"⚠️ Не удалось получить данные ни из CLOB, ни из Gamma API для {slug}")
-                        condition_id = None
-                        clob_token_ids = []
-                    else:
-                        logger.info(f"✅ Получил данные из Gamma API для неторгуемого рынка")
-                elif clob_error:
-                    logger.warning(f"⚠️ Не удалось получить CLOB данные для {slug}: {clob_error}")
-                    condition_id = None
-                    clob_token_ids = []
-                
-                # Обогащаем market данными из API
-                market['condition_id'] = condition_id
-                market['clob_token_ids'] = clob_token_ids
-                
-                new_markets.append(market)
-                created_at = get_creation_time(market)
-                
-                # Логируем новый рынок
-                logger.info(f"🆕 Новый рынок: {question}")
-                logger.info(f"ID: {market_id}")
-                logger.info(f"Время создания: {created_at}")
-                logger.info(f"Активный: {get_active(market)}")
-                logger.info(f"Slug: {get_slug(market)}")
-                logger.info(f"Condition ID: {get_condition_id(market)}")
-                logger.info(f"CLOB Token IDs: {get_clob_token_ids(market)}")
-                logger.info(f"Enable Order Book: {get_enable_order_book(market)}")
-                logger.info(f"Volume: {get_volume(market)}")
-                logger.info(f"Liquidity: {get_liquidity(market)}")
-                logger.info("---")
-                
-                # Отправляем уведомление в Telegram
-                message = (
-                    f"🆕 <b>Новый рынок на Polymarket!</b>\n\n"
-                    f"📋 Вопрос: {question}\n"
-                    f"🆔 ID: {market_id}\n"
-                    f"⏰ Создан: {created_at}\n"
-                    f"🔗 Slug: {get_slug(market)}\n"
-                    f"📊 Активен: {'Да' if get_active(market) else 'Нет'}\n"
-                    f"📈 Объем: ${get_volume(market) or 'N/A'}\n"
-                    f"💰 Ликвидность: ${get_liquidity(market) or 'N/A'}\n"
-                    f"📚 Order Book: {'Да' if get_enable_order_book(market) else 'Нет'}"
-                )
-                send_telegram_message(message)
-            else:
+            # Проверяем существование в БД
+            if market_exists(market_id):
                 already_exists += 1
                 logger.debug(f"Рынок {market_id} уже существует в БД, пропускаю")
+                continue
+            
+            logger.info(f"🆕 Обрабатываю новый рынок: {market_id}")
+            
+            # Получаем condition_id и clob_token_ids из CLOB API
+            slug = get_slug(market)
+            condition_id, clob_token_ids, clob_error = get_market_ids_from_clob(slug)
+            
+            # Если CLOB API не дал результатов, пробуем Gamma API
+            if clob_error and "not tradeable" in clob_error:
+                logger.info(f"🔄 Рынок не торгуется в CLOB API, пробую Gamma API...")
+                condition_id, clob_token_ids, gamma_error = get_market_ids_from_gamma_api(slug)
+                
+                if gamma_error:
+                    logger.warning(f"⚠️ Не удалось получить данные ни из CLOB, ни из Gamma API для {slug}")
+                    condition_id = None
+                    clob_token_ids = []
+                else:
+                    logger.info(f"✅ Получил данные из Gamma API для неторгуемого рынка")
+            elif clob_error:
+                logger.warning(f"⚠️ Не удалось получить CLOB данные для {slug}: {clob_error}")
+                condition_id = None
+                clob_token_ids = []
+            
+            # Обогащаем market данными из API
+            market['condition_id'] = condition_id
+            market['clob_token_ids'] = clob_token_ids
+            
+            new_markets.append(market)
+            created_at = get_creation_time(market)
+            
+            # Логируем новый рынок
+            logger.info(f"🆕 Новый рынок: {question}")
+            logger.info(f"ID: {market_id}")
+            logger.info(f"Время создания: {created_at}")
+            logger.info(f"Активный: {get_active(market)}")
+            logger.info(f"Slug: {get_slug(market)}")
+            logger.info(f"Condition ID: {get_condition_id(market)}")
+            logger.info(f"CLOB Token IDs: {get_clob_token_ids(market)}")
+            logger.info(f"Enable Order Book: {get_enable_order_book(market)}")
+            logger.info(f"Volume: {get_volume(market)}")
+            logger.info(f"Liquidity: {get_liquidity(market)}")
+            logger.info("---")
+            
+            # Отправляем уведомление в Telegram
+            message = (
+                f"🆕 <b>Новый рынок на Polymarket!</b>\n\n"
+                f"📋 Вопрос: {question}\n"
+                f"🆔 ID: {market_id}\n"
+                f"⏰ Создан: {created_at}\n"
+                f"🔗 Slug: {get_slug(market)}\n"
+                f"📊 Активен: {'Да' if get_active(market) else 'Нет'}\n"
+                f"📈 Объем: ${get_volume(market) or 'N/A'}\n"
+                f"💰 Ликвидность: ${get_liquidity(market) or 'N/A'}\n"
+                f"📚 Order Book: {'Да' if get_enable_order_book(market) else 'Нет'}"
+            )
+            send_telegram_message(message)
         
         logger.info(f"📈 Статистика: {len(new_markets)} новых, {already_exists} уже в базе, {skipped_special} пропущено (Up or Down)")
         
