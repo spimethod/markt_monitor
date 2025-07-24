@@ -111,25 +111,15 @@ def get_market_ids_from_gamma_api(slug):
         if markets:
             market = markets[0]
             
-            # Пробуем извлечь condition_id из разных полей
-            condition_id = market.get("condition_id") or market.get("conditionId")
-            
-            # Пробуем извлечь token_ids из разных полей
-            token_ids = []
-            clob_token_ids = market.get("clobTokenIds") or market.get("clob_token_ids", [])
-            if clob_token_ids:
-                token_ids = clob_token_ids
-            
-            # Если нет clob_token_ids, пробуем из tokens массива
-            if not token_ids:
-                tokens = market.get("tokens", [])
-                token_ids = [token.get("token_id") for token in tokens if token.get("token_id")]
+            # Используем правильные ключи из Gamma API
+            condition_id = market.get("conditionId")  # Правильный ключ
+            clob_token_ids = market.get("clobTokenIds", [])  # Правильный ключ
             
             logger.info(f"✅ Данные из Gamma API:")
             logger.info(f"   Condition ID: {condition_id}")
-            logger.info(f"   Token IDs: {token_ids}")
+            logger.info(f"   Token IDs: {clob_token_ids}")
             
-            return condition_id, token_ids, None
+            return condition_id, clob_token_ids, None
         else:
             return None, None, "Market not found in Gamma API"
             
