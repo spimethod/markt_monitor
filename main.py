@@ -215,8 +215,15 @@ def get_condition_id(market):
     return market.get('condition_id')
 
 def get_clob_token_ids(market):
-    """Извлекает clob_token_ids как массив"""
-    token_ids = market.get('clob_token_ids') or market.get('clobTokenIds') or []
+    """Извлекает clob_token_ids как массив согласно канонической документации"""
+    # Основной источник - clobTokenIds (как в документации)
+    token_ids = market.get('clobTokenIds', [])
+    
+    # Если clobTokenIds пустой, пробуем извлечь из tokens массива
+    if not token_ids:
+        tokens = market.get('tokens', [])
+        token_ids = [token.get('token_id') for token in tokens if token.get('token_id')]
+    
     # Убеждаемся, что это список строк
     if isinstance(token_ids, list):
         return [str(tid) for tid in token_ids if tid]
