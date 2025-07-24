@@ -47,6 +47,30 @@ def send_telegram_message(message):
     except Exception as e:
         logger.error(f"Ошибка отправки в Telegram: {e}")
 
+def get_market_ids_from_clob(slug):
+    """
+    Получает condition_id и token_ids через CLOB API согласно документации
+    """
+    try:
+        # Получаем все рынки из CLOB API
+        clob_response = requests.get("https://clob.polymarket.com/markets", timeout=10)
+        clob_response.raise_for_status()
+        
+        clob_markets = clob_response.json()["data"]
+        
+        # Ищем рынок по slug в market_slug поле
+        for market in clob_markets:
+            if market.get("market_slug") == slug:
+                condition_id = market.get("condition_id")
+                token_ids = [token["token_id"] for token in market.get("tokens", [])]
+                
+                return condition_id, token_ids, None
+        
+        return None, None, "Market not found in CLOB"
+    except Exception as e:
+        logger.error(f"Ошибка получения данных из CLOB API: {e}")
+        return None, None, f"CLOB API error: {e}"
+
 def connect_db():
     """Подключение к PostgreSQL"""
     try:
@@ -211,18 +235,14 @@ def get_slug(market):
     return market.get('slug')
 
 def get_condition_id(market):
-    """Извлекает condition_id"""
+    """Извлекает condition_id из CLOB API данных"""
+    # Используем condition_id из CLOB API, если он есть в market
     return market.get('condition_id')
 
 def get_clob_token_ids(market):
-    """Извлекает clob_token_ids как массив согласно канонической документации"""
-    # Основной источник - clobTokenIds (как в документации)
-    token_ids = market.get('clobTokenIds', [])
-    
-    # Если clobTokenIds пустой, пробуем извлечь из tokens массива
-    if not token_ids:
-        tokens = market.get('tokens', [])
-        token_ids = [token.get('token_id') for token in tokens if token.get('token_id')]
+    """Извлекает clob_token_ids из CLOB API данных"""
+    # Используем token_ids из CLOB API, если они есть в market
+    token_ids = market.get('clob_token_ids', [])
     
     # Убеждаемся, что это список строк
     if isinstance(token_ids, list):
@@ -283,6 +303,20 @@ def monitor_new_markets():
                 continue  # Пропускаем такие рынки
             market_id = get_id(market)
             if not market_exists(market_id):
+                # Получаем condition_id и clob_token_ids из CLOB API
+                slug = get_slug(market)
+                condition_id, clob_token_ids, clob_error = get_market_ids_from_clob(slug)
+                
+                if clob_error:
+                    logger.warning(f"⚠️ Не удалось получить CLOB данные для {slug}: {clob_error}")
+                    # Продолжаем без CLOB данных
+                    condition_id = None
+                    clob_token_ids = []
+                
+                # Обогащаем market данными из CLOB API
+                market['condition_id'] = condition_id
+                market['clob_token_ids'] = clob_token_ids
+                
                 new_markets.append(market)
                 created_at = get_creation_time(market)
                 
