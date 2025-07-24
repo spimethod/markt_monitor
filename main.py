@@ -363,7 +363,7 @@ def save_markets(markets):
         conn.close()
 
 def delete_old_markets():
-    """Удаляет рынки старше RETENTION_HOURS часов"""
+    """Удаляет рынки старше RETENTION_HOURS часов (кроме ожидающих активации)"""
     RETENTION_HOURS = 25
     conn = connect_db()
     if not conn:
@@ -372,14 +372,16 @@ def delete_old_markets():
     try:
         with conn.cursor() as cursor:
             cutoff_time = datetime.now(timezone.utc) - timedelta(hours=RETENTION_HOURS)
+            
+            # Удаляем только рынки, которые НЕ в статусе 'created' (не ожидают активации)
             cursor.execute(
-                "DELETE FROM markets WHERE created_at < %s",
+                "DELETE FROM markets WHERE created_at < %s AND market_status != 'created'",
                 (cutoff_time,)
             )
             deleted_count = cursor.rowcount
             conn.commit()
             if deleted_count > 0:
-                logger.info(f"🗑️ Удалено {deleted_count} старых рынков")
+                logger.info(f"🗑️ Удалено {deleted_count} старых рынков (не ожидающих активации)")
     except Exception as e:
         logger.error(f"Ошибка удаления старых рынков: {e}")
     finally:
@@ -611,6 +613,61 @@ def check_pending_markets():
             elapsed = current_time - created_at
             logger.info(f"⏳ {slug} все еще ожидает активации ({elapsed.total_seconds()/60:.1f} минут)")
 
+def cleanup_inactive_markets():
+    """Удаляет рынки, которые не активировались в течение 12 часов"""
+    MAX_WAIT_HOURS = 12
+    conn = connect_db()
+    if not conn:
+        return
+    
+    try:
+        with conn.cursor() as cursor:
+            # Находим рынки, которые созданы более 12 часов назад и все еще в статусе 'created'
+            cutoff_time = datetime.now(timezone.utc) - timedelta(hours=MAX_WAIT_HOURS)
+            
+            cursor.execute("""
+                SELECT id, slug, created_at, market_status 
+                FROM markets 
+                WHERE market_status = 'created' AND created_at < %s
+            """, (cutoff_time,))
+            
+            inactive_markets = cursor.fetchall()
+            
+            if inactive_markets:
+                logger.info(f"🗑️ Найдено {len(inactive_markets)} неактивных рынков (старше {MAX_WAIT_HOURS} часов)")
+                
+                for market_id, slug, created_at, status in inactive_markets:
+                    elapsed_hours = (datetime.now(timezone.utc) - created_at).total_seconds() / 3600
+                    logger.info(f"   Удаляю рынок {slug} (ID: {market_id}) - {elapsed_hours:.1f} часов ожидания")
+                
+                # Удаляем неактивные рынки
+                cursor.execute("""
+                    DELETE FROM markets 
+                    WHERE market_status = 'created' AND created_at < %s
+                """, (cutoff_time,))
+                
+                deleted_count = cursor.rowcount
+                conn.commit()
+                
+                if deleted_count > 0:
+                    logger.info(f"✅ Удалено {deleted_count} неактивных рынков")
+                    
+                    # Отправляем уведомление в Telegram
+                    message = (
+                        f"🗑️ <b>Удалены неактивные рынки</b>\n\n"
+                        f"⏰ Удалено: {deleted_count} рынков\n"
+                        f"⏱️ Максимальное время ожидания: {MAX_WAIT_HOURS} часов\n"
+                        f"📅 Время: {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M:%S')} UTC"
+                    )
+                    send_telegram_message(message)
+            else:
+                logger.debug(f"✅ Нет неактивных рынков для удаления (проверка каждые {POLL_INTERVAL} секунд)")
+                
+    except Exception as e:
+        logger.error(f"Ошибка удаления неактивных рынков: {e}")
+    finally:
+        conn.close()
+
 def main():
     logger.info("=== Запуск Polymarket Market Monitor ===")
     
@@ -628,6 +685,9 @@ def main():
             
             # Проверка активации pending рынков
             check_pending_markets()
+            
+            # Очищаем неактивные рынки (старше 12 часов)
+            cleanup_inactive_markets()
             
             # Очищаем старые записи
             delete_old_markets()
