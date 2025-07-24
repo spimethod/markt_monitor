@@ -403,7 +403,11 @@ def get_creation_time(market):
             try:
                 # Если это строка, парсим её
                 if isinstance(market[field], str):
-                    return datetime.fromisoformat(market[field].replace('Z', '+00:00'))
+                    dt = datetime.fromisoformat(market[field].replace('Z', '+00:00'))
+                    # Убеждаемся, что у datetime есть timezone
+                    if dt.tzinfo is None:
+                        dt = dt.replace(tzinfo=timezone.utc)
+                    return dt
                 # Если это timestamp
                 elif isinstance(market[field], (int, float)):
                     return datetime.fromtimestamp(market[field], tz=timezone.utc)
@@ -598,7 +602,13 @@ def check_pending_markets():
             
         else:
             # Рынок все еще ожидает активации
-            elapsed = datetime.now(timezone.utc) - created_at
+            # Исправляем ошибку с timezone
+            current_time = datetime.now(timezone.utc)
+            if created_at.tzinfo is None:
+                # Если created_at без timezone, добавляем UTC
+                created_at = created_at.replace(tzinfo=timezone.utc)
+            
+            elapsed = current_time - created_at
             logger.info(f"⏳ {slug} все еще ожидает активации ({elapsed.total_seconds()/60:.1f} минут)")
 
 def main():
