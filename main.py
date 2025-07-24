@@ -191,7 +191,10 @@ def market_exists(market_id):
     try:
         with conn.cursor() as cursor:
             cursor.execute("SELECT id FROM markets WHERE id = %s", (market_id,))
-            return cursor.fetchone() is not None
+            exists = cursor.fetchone() is not None
+            if exists:
+                logger.debug(f"Рынок {market_id} уже существует в БД")
+            return exists
     except Exception as e:
         logger.error(f"Ошибка проверки существования рынка: {e}")
         return False
@@ -357,8 +360,13 @@ def monitor_new_markets():
             if any(question.startswith(prefix) for prefix in SKIP_PREFIXES):
                 skipped_special += 1
                 continue  # Пропускаем такие рынки
+            
             market_id = get_id(market)
+            logger.debug(f"Проверяю рынок ID: {market_id}, Slug: {get_slug(market)}")
+            
             if not market_exists(market_id):
+                logger.info(f"🆕 Обрабатываю новый рынок: {market_id}")
+                
                 # Получаем condition_id и clob_token_ids из CLOB API
                 slug = get_slug(market)
                 condition_id, clob_token_ids, clob_error = get_market_ids_from_clob(slug)
@@ -414,6 +422,7 @@ def monitor_new_markets():
                 send_telegram_message(message)
             else:
                 already_exists += 1
+                logger.debug(f"Рынок {market_id} уже существует в БД, пропускаю")
         
         logger.info(f"📈 Статистика: {len(new_markets)} новых, {already_exists} уже в базе, {skipped_special} пропущено (Up or Down)")
         
