@@ -11,6 +11,7 @@ import psycopg2
 from psycopg2.extras import execute_values
 from loguru import logger
 from datetime import datetime, timedelta, timezone
+from enum import Enum
 
 # === Конфиг ===
 API_URL = os.getenv("API_URL")
@@ -30,6 +31,11 @@ PGDATABASE = os.getenv("PGDATABASE")
 logger.remove()
 logger.add(sys.stdout, format="{time} | {level} | {message}", level="INFO")
 
+class MarketStatus(Enum):
+    CREATED = "created"           # Есть в Gamma API
+    TRADING_READY = "trading_ready"  # Есть в CLOB API
+    NOT_TRADEABLE = "not_tradeable"  # enableOrderBook = False
+
 def send_telegram_message(message):
     """Отправляет сообщение в Telegram, если настроены токен и чат."""
     if not TELEGRAM_BOT_TOKEN or not TELEGRAM_CHAT_ID:
@@ -46,6 +52,72 @@ def send_telegram_message(message):
         response.raise_for_status()
     except Exception as e:
         logger.error(f"Ошибка отправки в Telegram: {e}")
+
+def get_market_status(slug):
+    """
+    Определяет статус рынка и получает все доступные данные
+    """
+    # 1. Проверяем Gamma API
+    gamma_data = get_market_ids_from_gamma_api(slug)
+    if not gamma_data[0]:  # condition_id не найден
+        return {
+            "status": "not_found",
+            "error": "Market not found in Gamma API"
+        }
+    
+    condition_id, token_ids, gamma_error = gamma_data
+    
+    # 2. Проверяем enableOrderBook через дополнительный запрос
+    try:
+        gamma_response = requests.get(
+            "https://gamma-api.polymarket.com/markets",
+            params={"slug": slug, "active": True},
+            timeout=10
+        )
+        gamma_response.raise_for_status()
+        markets = gamma_response.json()
+        
+        if markets:
+            market = markets[0]
+            enable_order_book = market.get("enableOrderBook", False)
+            
+            if not enable_order_book:
+                return {
+                    "status": MarketStatus.NOT_TRADEABLE.value,
+                    "condition_id": condition_id,
+                    "token_ids": token_ids,
+                    "message": "Market created but trading disabled"
+                }
+        else:
+            return {
+                "status": "not_found",
+                "error": "Market not found in Gamma API"
+            }
+    except Exception as e:
+        logger.error(f"Ошибка проверки enableOrderBook: {e}")
+        return {
+            "status": "error",
+            "error": f"Error checking enableOrderBook: {e}"
+        }
+    
+    # 3. Проверяем CLOB API
+    clob_data = get_market_ids_from_clob(slug)
+    if clob_data[0]:  # condition_id найден в CLOB
+        return {
+            "status": MarketStatus.TRADING_READY.value,
+            "condition_id": clob_data[0],
+            "token_ids": clob_data[1],
+            "message": "Market ready for trading"
+        }
+    
+    # 4. Рынок создан, но еще не готов к торговле
+    return {
+        "status": MarketStatus.CREATED.value,
+        "condition_id": condition_id,
+        "token_ids": token_ids,
+        "message": "Market created, waiting for trading activation",
+        "estimated_wait_time": "Usually 5-30 minutes"
+    }
 
 def get_market_ids_from_clob(slug):
     """
@@ -154,14 +226,24 @@ CREATE TABLE IF NOT EXISTS markets (
     clob_token_ids TEXT[],
     enable_order_book BOOLEAN,
     volume NUMERIC,
-    liquidity NUMERIC
+    liquidity NUMERIC,
+    market_status TEXT DEFAULT 'created',
+    trading_activated_at TIMESTAMP NULL
 );
 """
 
 INSERT_MARKET_SQL = """
-INSERT INTO markets (id, question, created_at, active, slug, condition_id, clob_token_ids, enable_order_book, volume, liquidity)
+INSERT INTO markets (id, question, created_at, active, slug, condition_id, clob_token_ids, enable_order_book, volume, liquidity, market_status)
 VALUES %s
-ON CONFLICT (id) DO NOTHING;
+ON CONFLICT (id) DO UPDATE SET
+    condition_id = EXCLUDED.condition_id,
+    clob_token_ids = EXCLUDED.clob_token_ids,
+    market_status = EXCLUDED.market_status,
+    trading_activated_at = CASE 
+        WHEN EXCLUDED.market_status = 'trading_ready' AND markets.market_status != 'trading_ready' 
+        THEN NOW() 
+        ELSE markets.trading_activated_at 
+    END;
 """
 
 def ensure_table():
@@ -201,6 +283,51 @@ def market_exists(market_id):
     finally:
         conn.close()
 
+def get_pending_markets():
+    """Получает список рынков, ожидающих активации торговли"""
+    conn = connect_db()
+    if not conn:
+        return []
+    
+    try:
+        with conn.cursor() as cursor:
+            cursor.execute(
+                "SELECT id, slug, created_at FROM markets WHERE market_status = 'created' ORDER BY created_at DESC"
+            )
+            return cursor.fetchall()
+    except Exception as e:
+        logger.error(f"Ошибка получения pending рынков: {e}")
+        return []
+    finally:
+        conn.close()
+
+def update_market_status(market_id, status, condition_id=None, clob_token_ids=None):
+    """Обновляет статус рынка в БД"""
+    conn = connect_db()
+    if not conn:
+        return False
+    
+    try:
+        with conn.cursor() as cursor:
+            if status == MarketStatus.TRADING_READY.value:
+                cursor.execute(
+                    "UPDATE markets SET market_status = %s, trading_activated_at = NOW(), condition_id = %s, clob_token_ids = %s WHERE id = %s",
+                    (status, condition_id, clob_token_ids, market_id)
+                )
+            else:
+                cursor.execute(
+                    "UPDATE markets SET market_status = %s WHERE id = %s",
+                    (status, market_id)
+                )
+        conn.commit()
+        logger.info(f"✅ Обновлен статус рынка {market_id}: {status}")
+        return True
+    except Exception as e:
+        logger.error(f"Ошибка обновления статуса рынка: {e}")
+        return False
+    finally:
+        conn.close()
+
 def save_markets(markets):
     """Сохраняет новые рынки в БД"""
     conn = connect_db()
@@ -222,7 +349,8 @@ def save_markets(markets):
                     get_clob_token_ids(market),
                     get_enable_order_book(market),
                     get_volume(market),
-                    get_liquidity(market)
+                    get_liquidity(market),
+                    get_market_status_from_data(market)
                 ))
             
             # Вставляем данные
@@ -294,8 +422,7 @@ def get_slug(market):
     return market.get('slug')
 
 def get_condition_id(market):
-    """Извлекает condition_id из CLOB API данных"""
-    # Используем condition_id из CLOB API, если он есть в market
+    """Извлекает condition_id из обогащенного market объекта"""
     return market.get('condition_id')
 
 def get_clob_token_ids(market):
@@ -331,6 +458,10 @@ def get_liquidity(market):
         except:
             return None
     return None
+
+def get_market_status_from_data(market):
+    """Определяет статус рынка из данных"""
+    return market.get('market_status', MarketStatus.CREATED.value)
 
 def monitor_new_markets():
     params = {
@@ -371,29 +502,16 @@ def monitor_new_markets():
             
             logger.info(f"🆕 Обрабатываю новый рынок: {market_id}")
             
-            # Получаем condition_id и clob_token_ids из CLOB API
+            # Определяем статус рынка
             slug = get_slug(market)
-            condition_id, clob_token_ids, clob_error = get_market_ids_from_clob(slug)
+            status_info = get_market_status(slug)
             
-            # Если CLOB API не дал результатов, пробуем Gamma API
-            if clob_error and "not tradeable" in clob_error:
-                logger.info(f"🔄 Рынок не торгуется в CLOB API, пробую Gamma API...")
-                condition_id, clob_token_ids, gamma_error = get_market_ids_from_gamma_api(slug)
-                
-                if gamma_error:
-                    logger.warning(f"⚠️ Не удалось получить данные ни из CLOB, ни из Gamma API для {slug}")
-                    condition_id = None
-                    clob_token_ids = []
-                else:
-                    logger.info(f"✅ Получил данные из Gamma API для неторгуемого рынка")
-            elif clob_error:
-                logger.warning(f"⚠️ Не удалось получить CLOB данные для {slug}: {clob_error}")
-                condition_id = None
-                clob_token_ids = []
+            logger.info(f"📊 Статус рынка {slug}: {status_info['status']}")
             
-            # Обогащаем market данными из API
-            market['condition_id'] = condition_id
-            market['clob_token_ids'] = clob_token_ids
+            # Обогащаем market данными
+            market['condition_id'] = status_info.get('condition_id')
+            market['clob_token_ids'] = status_info.get('token_ids', [])
+            market['market_status'] = status_info['status']
             
             new_markets.append(market)
             created_at = get_creation_time(market)
@@ -409,6 +527,8 @@ def monitor_new_markets():
             logger.info(f"Enable Order Book: {get_enable_order_book(market)}")
             logger.info(f"Volume: {get_volume(market)}")
             logger.info(f"Liquidity: {get_liquidity(market)}")
+            logger.info(f"Статус: {status_info['status']}")
+            logger.info(f"Сообщение: {status_info.get('message', 'N/A')}")
             logger.info("---")
             
             # Отправляем уведомление в Telegram
@@ -421,7 +541,8 @@ def monitor_new_markets():
                 f"📊 Активен: {'Да' if get_active(market) else 'Нет'}\n"
                 f"📈 Объем: ${get_volume(market) or 'N/A'}\n"
                 f"💰 Ликвидность: ${get_liquidity(market) or 'N/A'}\n"
-                f"📚 Order Book: {'Да' if get_enable_order_book(market) else 'Нет'}"
+                f"📚 Order Book: {'Да' if get_enable_order_book(market) else 'Нет'}\n"
+                f"🔄 Статус: {status_info['status']}"
             )
             send_telegram_message(message)
         
@@ -433,6 +554,52 @@ def monitor_new_markets():
             logger.info("Нет новых рынков. Жду...")
     except Exception as e:
         logger.error(f"Ошибка при запросе к Gamma Markets API: {e}")
+
+def check_pending_markets():
+    """Проверяет рынки, ожидающие активации торговли"""
+    pending_markets = get_pending_markets()
+    
+    if not pending_markets:
+        return
+    
+    logger.info(f"🔄 Проверяю {len(pending_markets)} рынков, ожидающих активации...")
+    
+    for market_id, slug, created_at in pending_markets:
+        logger.info(f"🔍 Проверяю активацию для {slug} (ID: {market_id})")
+        
+        # Проверяем статус рынка
+        status_info = get_market_status(slug)
+        
+        if status_info['status'] == MarketStatus.TRADING_READY.value:
+            logger.info(f"✅ Торговля активирована для {slug}!")
+            
+            # Обновляем статус в БД
+            update_market_status(
+                market_id, 
+                MarketStatus.TRADING_READY.value,
+                status_info.get('condition_id'),
+                status_info.get('token_ids', [])
+            )
+            
+            # Отправляем уведомление
+            message = (
+                f"🎉 <b>Торговля активирована!</b>\n\n"
+                f"📋 Рынок: {slug}\n"
+                f"🆔 ID: {market_id}\n"
+                f"⏰ Активирован: {datetime.now(timezone.utc)}\n"
+                f"🆔 Condition ID: {status_info.get('condition_id')}\n"
+                f"🔢 Token IDs: {len(status_info.get('token_ids', []))}"
+            )
+            send_telegram_message(message)
+            
+        elif status_info['status'] == MarketStatus.NOT_TRADEABLE.value:
+            logger.info(f"❌ Торговля отключена для {slug}")
+            update_market_status(market_id, MarketStatus.NOT_TRADEABLE.value)
+            
+        else:
+            # Рынок все еще ожидает активации
+            elapsed = datetime.now(timezone.utc) - created_at
+            logger.info(f"⏳ {slug} все еще ожидает активации ({elapsed.total_seconds()/60:.1f} минут)")
 
 def main():
     logger.info("=== Запуск Polymarket Market Monitor ===")
@@ -446,8 +613,15 @@ def main():
     
     while True:
         try:
+            # Мониторинг новых рынков
             monitor_new_markets()
-            delete_old_markets()  # Очищаем старые записи
+            
+            # Проверка активации pending рынков
+            check_pending_markets()
+            
+            # Очищаем старые записи
+            delete_old_markets()
+            
             time.sleep(POLL_INTERVAL)
         except KeyboardInterrupt:
             logger.info("⏹️ Остановка Polymarket Market Monitor...")
