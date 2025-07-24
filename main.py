@@ -52,24 +52,90 @@ def get_market_ids_from_clob(slug):
     Получает condition_id и token_ids через CLOB API согласно документации
     """
     try:
+        logger.info(f"🔍 Ищу данные для slug: {slug}")
+        
         # Получаем все рынки из CLOB API
         clob_response = requests.get("https://clob.polymarket.com/markets", timeout=10)
         clob_response.raise_for_status()
         
-        clob_markets = clob_response.json()["data"]
+        clob_data = clob_response.json()
+        clob_markets = clob_data.get("data", [])
+        
+        logger.info(f"📊 Получено {len(clob_markets)} рынков из CLOB API")
         
         # Ищем рынок по slug в market_slug поле
+        found_market = None
         for market in clob_markets:
-            if market.get("market_slug") == slug:
-                condition_id = market.get("condition_id")
-                token_ids = [token["token_id"] for token in market.get("tokens", [])]
-                
-                return condition_id, token_ids, None
+            market_slug = market.get("market_slug")
+            if market_slug == slug:
+                found_market = market
+                break
         
-        return None, None, "Market not found in CLOB"
+        if found_market:
+            condition_id = found_market.get("condition_id")
+            token_ids = [token["token_id"] for token in found_market.get("tokens", [])]
+            
+            logger.info(f"✅ Найден рынок в CLOB API:")
+            logger.info(f"   Condition ID: {condition_id}")
+            logger.info(f"   Token IDs: {token_ids}")
+            
+            return condition_id, token_ids, None
+        else:
+            # Логируем первые несколько slug'ов для отладки
+            sample_slugs = [m.get("market_slug") for m in clob_markets[:5]]
+            logger.warning(f"❌ Рынок {slug} не найден в CLOB API (не торгуется)")
+            logger.warning(f"   Доступные slug'ы (первые 5): {sample_slugs}")
+            
+            return None, None, "Market not found in CLOB (not tradeable)"
+            
     except Exception as e:
         logger.error(f"Ошибка получения данных из CLOB API: {e}")
         return None, None, f"CLOB API error: {e}"
+
+def get_market_ids_from_gamma_api(slug):
+    """
+    Альтернативный способ получения condition_id через Gamma API параметры
+    """
+    try:
+        logger.info(f"🔍 Пробую получить данные через Gamma API для slug: {slug}")
+        
+        # Пробуем получить данные через Gamma API с параметрами
+        gamma_response = requests.get(
+            "https://gamma-api.polymarket.com/markets",
+            params={"slug": slug, "active": True},
+            timeout=10
+        )
+        gamma_response.raise_for_status()
+        
+        markets = gamma_response.json()
+        if markets:
+            market = markets[0]
+            
+            # Пробуем извлечь condition_id из разных полей
+            condition_id = market.get("condition_id") or market.get("conditionId")
+            
+            # Пробуем извлечь token_ids из разных полей
+            token_ids = []
+            clob_token_ids = market.get("clobTokenIds") or market.get("clob_token_ids", [])
+            if clob_token_ids:
+                token_ids = clob_token_ids
+            
+            # Если нет clob_token_ids, пробуем из tokens массива
+            if not token_ids:
+                tokens = market.get("tokens", [])
+                token_ids = [token.get("token_id") for token in tokens if token.get("token_id")]
+            
+            logger.info(f"✅ Данные из Gamma API:")
+            logger.info(f"   Condition ID: {condition_id}")
+            logger.info(f"   Token IDs: {token_ids}")
+            
+            return condition_id, token_ids, None
+        else:
+            return None, None, "Market not found in Gamma API"
+            
+    except Exception as e:
+        logger.error(f"Ошибка получения данных из Gamma API: {e}")
+        return None, None, f"Gamma API error: {e}"
 
 def connect_db():
     """Подключение к PostgreSQL"""
@@ -307,13 +373,23 @@ def monitor_new_markets():
                 slug = get_slug(market)
                 condition_id, clob_token_ids, clob_error = get_market_ids_from_clob(slug)
                 
-                if clob_error:
+                # Если CLOB API не дал результатов, пробуем Gamma API
+                if clob_error and "not tradeable" in clob_error:
+                    logger.info(f"🔄 Рынок не торгуется в CLOB API, пробую Gamma API...")
+                    condition_id, clob_token_ids, gamma_error = get_market_ids_from_gamma_api(slug)
+                    
+                    if gamma_error:
+                        logger.warning(f"⚠️ Не удалось получить данные ни из CLOB, ни из Gamma API для {slug}")
+                        condition_id = None
+                        clob_token_ids = []
+                    else:
+                        logger.info(f"✅ Получил данные из Gamma API для неторгуемого рынка")
+                elif clob_error:
                     logger.warning(f"⚠️ Не удалось получить CLOB данные для {slug}: {clob_error}")
-                    # Продолжаем без CLOB данных
                     condition_id = None
                     clob_token_ids = []
                 
-                # Обогащаем market данными из CLOB API
+                # Обогащаем market данными из API
                 market['condition_id'] = condition_id
                 market['clob_token_ids'] = clob_token_ids
                 
