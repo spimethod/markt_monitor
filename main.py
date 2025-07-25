@@ -226,8 +226,11 @@ def monitor_new_markets():
         limit = 3
         max_limit = 50  # Максимальный лимит для поиска
         found_new_markets = []
+        attempts = 0
+        max_attempts = 5  # Максимальное количество попыток
         
-        while limit <= max_limit and len(found_new_markets) == 0:
+        while limit <= max_limit and len(found_new_markets) == 0 and attempts < max_attempts:
+            attempts += 1
             params = {
                 'active': True,
                 'limit': limit,
@@ -239,7 +242,7 @@ def monitor_new_markets():
             response.raise_for_status()
             markets = response.json()
             
-            logger.info(f"📊 Получено {len(markets)} рынков из API (лимит: {limit})")
+            logger.info(f"📊 Получено {len(markets)} рынков из API (лимит: {limit}, попытка: {attempts})")
             
             new_markets_count = 0
             already_in_db_count = 0
@@ -309,9 +312,13 @@ def monitor_new_markets():
             
             # Если не нашли новых рынков, увеличиваем лимит
             if len(found_new_markets) == 0:
-                if filtered_count > 0:
-                    logger.info(f"🔍 Все {filtered_count} рынков отфильтрованы (Up or Down). Увеличиваю лимит до {min(limit * 2, max_limit)}...")
-                    limit = min(limit * 2, max_limit)
+                if filtered_count > 0 and limit < max_limit:
+                    next_limit = min(limit * 2, max_limit)
+                    logger.info(f"🔍 Все {filtered_count} рынков отфильтрованы (Up or Down). Увеличиваю лимит до {next_limit}...")
+                    limit = next_limit
+                elif limit >= max_limit:
+                    logger.warning(f"⚠️ Достигнут максимальный лимит {max_limit}. Все рынки отфильтрованы или уже в базе.")
+                    break
                 else:
                     logger.info(f"📈 Статистика: {new_markets_count} новых, {already_in_db_count} уже в базе, {skipped_count} пропущено")
                     break
