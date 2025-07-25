@@ -244,6 +244,14 @@ def monitor_new_markets():
             
             logger.info(f"📊 Получено {len(markets)} рынков из API (лимит: {limit}, попытка: {attempts})")
             
+            # Логируем первые несколько рынков для диагностики
+            if attempts == 1:  # Только в первой попытке
+                logger.info("🔍 Первые 3 полученных рынка:")
+                for i, market in enumerate(markets[:3]):
+                    market_id = market.get('id')
+                    question = market.get('question', 'N/A')
+                    logger.info(f"   {i+1}. ID: {market_id}, Вопрос: {question}")
+            
             new_markets_count = 0
             already_in_db_count = 0
             skipped_count = 0
@@ -251,6 +259,7 @@ def monitor_new_markets():
             
             for market in markets:
                 question = get_question(market) or ""
+                market_id = get_id(market)
                 
                 # Проверяем фильтр "Up or Down"
                 SKIP_PREFIXES = [
@@ -262,10 +271,9 @@ def monitor_new_markets():
                 
                 if any(question.startswith(prefix) for prefix in SKIP_PREFIXES):
                     filtered_count += 1
-                    logger.debug(f"⏭️ Пропущен (Up or Down): {question}")
+                    logger.info(f"⏭️ Пропущен (Up or Down): ID={market_id}, Вопрос='{question}'")
                     continue
                 
-                market_id = get_id(market)
                 slug = get_slug(market)
                 
                 # Проверяем обязательные поля
