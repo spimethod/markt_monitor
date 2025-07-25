@@ -320,10 +320,13 @@ def monitor_new_markets():
             
             # Если не нашли новых рынков, увеличиваем лимит
             if len(found_new_markets) == 0:
-                if filtered_count > 0 and limit < max_limit:
+                if filtered_count > 0 and limit < max_limit and attempts < max_attempts:
                     next_limit = min(limit * 2, max_limit)
                     logger.info(f"🔍 Все {filtered_count} рынков отфильтрованы (Up or Down). Увеличиваю лимит до {next_limit}...")
                     limit = next_limit
+                elif attempts >= max_attempts:
+                    logger.info(f"⏸️ Достигнуто максимальное количество попыток ({max_attempts}). Перехожу в режим ожидания новых рынков...")
+                    break
                 elif limit >= max_limit:
                     logger.warning(f"⚠️ Достигнут максимальный лимит {max_limit}. Все рынки отфильтрованы или уже в базе.")
                     break
