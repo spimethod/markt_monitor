@@ -214,83 +214,124 @@ def get_slug(market):
     return market.get('slug')
 
 def monitor_new_markets():
-    params = {
-        'active': True,
-        'limit': 3,
-        'order': 'startDate',
-        'ascending': False
-    }
-    SKIP_PREFIXES = [
-        "Bitcoin Up or Down",
-        "Ethereum Up or Down",
-        "Solana Up or Down",
-        "XRP Up or Down"
-    ]
+    """Мониторит новые рынки с Polymarket Gamma API и сохраняет их в БД"""
+    conn = connect_db()
+    if not conn:
+        return
+
     try:
-        response = requests.get(API_URL, params=params, timeout=10)
-        response.raise_for_status()
-        markets = response.json()
-        logger.info(f"📊 Получено от API: {len(markets)} рынков")
+        logger.info("🟢 Начинаю мониторинг новых рынков...")
         
-        new_markets = []
-        skipped_special = 0
-        already_exists = 0
+        # Начинаем с небольшого лимита
+        limit = 3
+        max_limit = 50  # Максимальный лимит для поиска
+        found_new_markets = []
         
-        for market in markets:
-            question = get_question(market) or ""
-            if any(question.startswith(prefix) for prefix in SKIP_PREFIXES):
-                skipped_special += 1
-                continue  # Пропускаем такие рынки
+        while limit <= max_limit and len(found_new_markets) == 0:
+            params = {
+                'active': True,
+                'limit': limit,
+                'order': 'startDate',
+                'ascending': False
+            }
             
-            market_id = get_id(market)
-            slug = get_slug(market)
+            response = requests.get(API_URL, params=params, timeout=10)
+            response.raise_for_status()
+            markets = response.json()
             
-            # Проверяем обязательные поля
-            if not all([market_id, question, slug]):
-                logger.warning(f"❌ Пропущен рынок из-за отсутствия обязательных полей: ID={market_id}, Question={question}, Slug={slug}")
-                continue
+            logger.info(f"📊 Получено {len(markets)} рынков из API (лимит: {limit})")
             
-            # Проверяем существование в БД
-            if market_exists(market_id):
-                already_exists += 1
-                logger.debug(f"Рынок {market_id} уже существует в БД, пропускаю")
-                continue
+            new_markets_count = 0
+            already_in_db_count = 0
+            skipped_count = 0
+            filtered_count = 0
             
-            logger.info(f"🆕 Обрабатываю новый рынок: {market_id}")
+            for market in markets:
+                question = get_question(market) or ""
+                
+                # Проверяем фильтр "Up or Down"
+                SKIP_PREFIXES = [
+                    "Bitcoin Up or Down",
+                    "Ethereum Up or Down",
+                    "Solana Up or Down",
+                    "XRP Up or Down"
+                ]
+                
+                if any(question.startswith(prefix) for prefix in SKIP_PREFIXES):
+                    filtered_count += 1
+                    logger.debug(f"⏭️ Пропущен (Up or Down): {question}")
+                    continue
+                
+                market_id = get_id(market)
+                slug = get_slug(market)
+                
+                # Проверяем обязательные поля
+                if not all([market_id, question, slug]):
+                    logger.warning(f"❌ Пропущен рынок из-за отсутствия обязательных полей: ID={market_id}, Question={question}, Slug={slug}")
+                    skipped_count += 1
+                    continue
+                
+                # Проверяем существование в БД
+                if market_exists(market_id):
+                    already_in_db_count += 1
+                    logger.debug(f"Рынок {market_id} уже существует в БД, пропускаю")
+                    continue
+                
+                # Нашли новый подходящий рынок!
+                logger.info(f"🆕 Обрабатываю новый рынок: {market_id}")
+                
+                found_new_markets.append(market)
+                new_markets_count += 1
+                
+                created_at = get_creation_time(market)
+                
+                # Логируем новый рынок
+                logger.info(f"🆕 Новый рынок: {question}")
+                logger.info(f"ID: {market_id}")
+                logger.info(f"Slug: {slug}")
+                logger.info(f"Время создания: {created_at}")
+                logger.info(f"Активный: {get_active(market)}")
+                logger.info(f"Enable Order Book: {get_enable_order_book(market)}")
+                logger.info("---")
+                
+                # Отправляем уведомление в Telegram
+                message = (
+                    f"🆕 <b>Новый рынок на Polymarket!</b>\n\n"
+                    f"📋 Вопрос: {question}\n"
+                    f"🆔 ID: {market_id}\n"
+                    f"🔗 Slug: {slug}\n"
+                    f"⏰ Создан: {created_at}\n"
+                    f"📊 Активен: {'Да' if get_active(market) else 'Нет'}\n"
+                    f"📚 Order Book: {'Да' if get_enable_order_book(market) else 'Нет'}\n"
+                    f"🌐 Ссылка: https://polymarket.com/market/{slug}"
+                )
+                send_telegram_message(message)
             
-            new_markets.append(market)
-            created_at = get_creation_time(market)
-            
-            # Логируем новый рынок
-            logger.info(f"🆕 Новый рынок: {question}")
-            logger.info(f"ID: {market_id}")
-            logger.info(f"Slug: {slug}")
-            logger.info(f"Время создания: {created_at}")
-            logger.info(f"Активный: {get_active(market)}")
-            logger.info(f"Enable Order Book: {get_enable_order_book(market)}")
-            logger.info("---")
-            
-            # Отправляем уведомление в Telegram
-            message = (
-                f"🆕 <b>Новый рынок на Polymarket!</b>\n\n"
-                f"📋 Вопрос: {question}\n"
-                f"🆔 ID: {market_id}\n"
-                f"🔗 Slug: {slug}\n"
-                f"⏰ Создан: {created_at}\n"
-                f"📊 Активен: {'Да' if get_active(market) else 'Нет'}\n"
-                f"📚 Order Book: {'Да' if get_enable_order_book(market) else 'Нет'}\n"
-                f"🌐 Ссылка: https://polymarket.com/market/{slug}"
-            )
-            send_telegram_message(message)
+            # Если не нашли новых рынков, увеличиваем лимит
+            if len(found_new_markets) == 0:
+                if filtered_count > 0:
+                    logger.info(f"🔍 Все {filtered_count} рынков отфильтрованы (Up or Down). Увеличиваю лимит до {min(limit * 2, max_limit)}...")
+                    limit = min(limit * 2, max_limit)
+                else:
+                    logger.info(f"📈 Статистика: {new_markets_count} новых, {already_in_db_count} уже в базе, {skipped_count} пропущено")
+                    break
+            else:
+                # Нашли новые рынки, выводим статистику
+                logger.info(f"📈 Статистика: {len(found_new_markets)} новых, {already_in_db_count} уже в базе, {skipped_count} пропущено, {filtered_count} отфильтровано (Up or Down)")
+                break
         
-        logger.info(f"📈 Статистика: {len(new_markets)} новых, {already_exists} уже в базе, {skipped_special} пропущено (Up or Down)")
-        
-        if new_markets:
-            save_markets(new_markets)
+        # Сохраняем найденные рынки
+        if found_new_markets:
+            save_markets(found_new_markets)
         else:
             logger.info("Нет новых рынков. Жду...")
+            
+    except requests.exceptions.RequestException as e:
+        logger.error(f"Ошибка запроса к Gamma API: {e}")
     except Exception as e:
-        logger.error(f"Ошибка при запросе к Gamma Markets API: {e}")
+        logger.error(f"Неизвестная ошибка в monitor_new_markets: {e}")
+    finally:
+        conn.close()
 
 def main():
     logger.info("=== Запуск Polymarket Market Monitor ===")
