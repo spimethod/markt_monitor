@@ -69,12 +69,13 @@ CREATE TABLE IF NOT EXISTS markets (
     question TEXT,
     created_at TIMESTAMP,
     active BOOLEAN,
-    enable_order_book BOOLEAN
+    enable_order_book BOOLEAN,
+    slug TEXT UNIQUE
 );
 """
 
 INSERT_MARKET_SQL = """
-INSERT INTO markets (id, question, created_at, active, enable_order_book)
+INSERT INTO markets (id, question, created_at, active, enable_order_book, slug)
 VALUES %s
 ON CONFLICT (id) DO NOTHING;
 """
@@ -132,7 +133,8 @@ def save_markets(markets):
                     get_question(market),
                     get_creation_time(market),
                     get_active(market),
-                    get_enable_order_book(market)
+                    get_enable_order_book(market),
+                    get_slug(market)
                 ))
             
             # Вставляем данные
@@ -207,6 +209,10 @@ def get_enable_order_book(market):
     """Извлекает enable_order_book"""
     return market.get('enableOrderBook', False)
 
+def get_slug(market):
+    """Извлекает slug рынка"""
+    return market.get('slug')
+
 def monitor_new_markets():
     params = {
         'active': True,
@@ -237,6 +243,12 @@ def monitor_new_markets():
                 continue  # Пропускаем такие рынки
             
             market_id = get_id(market)
+            slug = get_slug(market)
+            
+            # Проверяем обязательные поля
+            if not all([market_id, question, slug]):
+                logger.warning(f"❌ Пропущен рынок из-за отсутствия обязательных полей: ID={market_id}, Question={question}, Slug={slug}")
+                continue
             
             # Проверяем существование в БД
             if market_exists(market_id):
@@ -252,6 +264,7 @@ def monitor_new_markets():
             # Логируем новый рынок
             logger.info(f"🆕 Новый рынок: {question}")
             logger.info(f"ID: {market_id}")
+            logger.info(f"Slug: {slug}")
             logger.info(f"Время создания: {created_at}")
             logger.info(f"Активный: {get_active(market)}")
             logger.info(f"Enable Order Book: {get_enable_order_book(market)}")
@@ -262,9 +275,11 @@ def monitor_new_markets():
                 f"🆕 <b>Новый рынок на Polymarket!</b>\n\n"
                 f"📋 Вопрос: {question}\n"
                 f"🆔 ID: {market_id}\n"
+                f"🔗 Slug: {slug}\n"
                 f"⏰ Создан: {created_at}\n"
                 f"📊 Активен: {'Да' if get_active(market) else 'Нет'}\n"
-                f"📚 Order Book: {'Да' if get_enable_order_book(market) else 'Нет'}"
+                f"📚 Order Book: {'Да' if get_enable_order_book(market) else 'Нет'}\n"
+                f"🌐 Ссылка: https://polymarket.com/market/{slug}"
             )
             send_telegram_message(message)
         
