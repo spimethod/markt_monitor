@@ -68,7 +68,17 @@ CREATE TABLE IF NOT EXISTS markets (
     created_at TIMESTAMP,
     active BOOLEAN,
     enable_order_book BOOLEAN,
-    slug TEXT UNIQUE
+    slug TEXT UNIQUE,
+    yes_prices TEXT,
+    no_prices TEXT,
+    market_exists BOOLEAN DEFAULT FALSE,
+    is_boolean BOOLEAN DEFAULT FALSE,
+    yes_percentage DECIMAL(5,2) DEFAULT 0.00,
+    contract_address TEXT,
+    status TEXT DEFAULT 'в работе',
+    last_updated TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    created_at_analytic TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    volume TEXT DEFAULT 'New'
 );
 """
 
@@ -76,6 +86,20 @@ INSERT_MARKET_SQL = """
 INSERT INTO markets (id, question, created_at, active, enable_order_book, slug)
 VALUES %s
 ON CONFLICT (id) DO NOTHING;
+"""
+
+UPDATE_ANALYTIC_SQL = """
+UPDATE markets 
+SET yes_prices = %s,
+    no_prices = %s,
+    market_exists = %s,
+    is_boolean = %s,
+    yes_percentage = %s,
+    contract_address = %s,
+    status = %s,
+    last_updated = CURRENT_TIMESTAMP,
+    volume = %s
+WHERE id = %s;
 """
 
 def ensure_table():
@@ -455,6 +479,65 @@ def initial_market_scan():
         logger.error(f"Ошибка запроса к Gamma API: {e}")
     except Exception as e:
         logger.error(f"Неизвестная ошибка в initial_market_scan: {e}")
+    finally:
+        conn.close()
+
+def update_market_analytics(market_id, analytics_data):
+    """Обновляет аналитические данные рынка"""
+    conn = connect_db()
+    if not conn:
+        return False
+    
+    try:
+        with conn.cursor() as cursor:
+            cursor.execute(UPDATE_ANALYTIC_SQL, (
+                analytics_data.get('yes_prices', ''),
+                analytics_data.get('no_prices', ''),
+                analytics_data.get('market_exists', False),
+                analytics_data.get('is_boolean', False),
+                analytics_data.get('yes_percentage', 0.00),
+                analytics_data.get('contract_address', ''),
+                analytics_data.get('status', 'в работе'),
+                analytics_data.get('volume', 'New'),
+                market_id
+            ))
+            conn.commit()
+            logger.info(f"📊 Обновлены аналитические данные для рынка {market_id}")
+            return True
+    except Exception as e:
+        logger.error(f"Ошибка обновления аналитических данных для рынка {market_id}: {e}")
+        return False
+    finally:
+        conn.close()
+
+def get_markets_for_analysis():
+    """Получает рынки для анализа (без аналитических данных)"""
+    conn = connect_db()
+    if not conn:
+        return []
+    
+    try:
+        with conn.cursor() as cursor:
+            cursor.execute("""
+                SELECT id, question, slug, created_at 
+                FROM markets 
+                WHERE yes_prices IS NULL OR yes_prices = ''
+                ORDER BY created_at DESC
+                LIMIT 10
+            """)
+            markets = cursor.fetchall()
+            return [
+                {
+                    'id': row[0],
+                    'question': row[1],
+                    'slug': row[2],
+                    'created_at': row[3]
+                }
+                for row in markets
+            ]
+    except Exception as e:
+        logger.error(f"Ошибка получения рынков для анализа: {e}")
+        return []
     finally:
         conn.close()
 
